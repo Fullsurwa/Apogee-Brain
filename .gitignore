@@ -1,0 +1,29 @@
+﻿# Ignore Obsidian vault internals
+Apogee Brain/.obsidian/
+Apogee Brain/.obsidian/plugins/
+Apogee Brain/.obsidian/workspace.json
+Apogee Brain/.obsidian/app.json
+Apogee Brain/.obsidian/appearance.json
+Apogee Brain/.obsidian/community-plugins.json
+Apogee Brain/.obsidian/core-plugins.json
+Apogee Brain/.obsidian/graph.json
+
+# Ignore Node modules and build artifacts
+node_modules/
+*.lock
+*.log
+dist/
+build/
+
+# Ignore audio and session logs
+*.wav
+Session_*.txt
+
+# Ignore local data and drafts
+ApogeeBrainData/
+My first app/
+Products Roadmap/
+
+# Ignore system files
+Thumbs.db
+.DS_Store
