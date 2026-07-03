@@ -1,0 +1,3 @@
+/agents "Apogee, create a brand-new note in my vault called 'SmartMart Brain - Bluetooth AoA Strategy'. Section: Technology Stack. Detail how Bluetooth Angle of Arrival (AoA) tracking works. Explain that instead of calculating simple signal strength (RSSI) or needing hundreds of complex ceiling-mounted sensors, AoA utilizes fixed wall/pillar antenna locators to measure the exact phase shift angles of an incoming signal. This allows the system to calculate precise X,Y coordinates down to 10-30cm accuracy, unaffected by dense retail metal shelving or crowds. Expand with how AI models calibrate signal noise, resolve overlapping signals, and continuously improve accuracy."
+[[SmartMart Brain – Start Here]]  
+[[EvalLite Brain – Obsidian Master Note]]

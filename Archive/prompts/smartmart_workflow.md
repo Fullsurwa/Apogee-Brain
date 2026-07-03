@@ -1,0 +1,3 @@
+/agents "Apogee, update the note 'SmartMart Brain - Bluetooth AoA Strategy'. Section: Workflow & Demographics. Explain that shoppers pick a color-coded active Bluetooth LE beacon pin at the entrance based on 3 demographic trackers—Men, Women, or Families (couples or parents with kids)—and slide it into their pocket. The AoA wall locators passively map their coordinates, traffic paths, and aisle linger times with zero video recording, zero facial recognition, and absolute data privacy compliance. Expand with how AI clusters paths, segments behaviors, and predicts likely next stops for dynamic promotions."
+[[SmartMart Brain – Start Here]]  
+[[EvalLite Brain – Obsidian Master Note]]
