@@ -27,3 +27,10 @@ Products Roadmap/
 # Ignore system files
 Thumbs.db
 .DS_Store
+
+# Ignore environment and secret files
+*.env
+*.key
+*.pem
+*.json.secret
+*.config.private
