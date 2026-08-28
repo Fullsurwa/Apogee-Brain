@@ -1,0 +1,25 @@
+# Secrets
+.env
+.env.*
+!.env.example
+credentials.json
+token.json
+
+# Dependencies and generated local files
+node_modules/
+**/node_modules/
+__pycache__/
+**/__pycache__/
+*.mp3
+*.wav
+temp_response.mp3
+
+# Obsidian local runtime state
+.obsidian/workspace.json
+.obsidian-mcp/locks/
+.obsidian-mcp/transactions/
+
+# Local cleanup artifacts
+_pre_cleanup_backup_*/
+project_classification_audit.txt
+04_Vault_Archive/Smart Mart Brain/interaction_history.json
