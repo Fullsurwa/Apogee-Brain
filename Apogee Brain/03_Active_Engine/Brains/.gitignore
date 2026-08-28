@@ -1,0 +1,7 @@
+core-engine/node_modules/
+*.mp3
+*.wav
+core-engine/interaction_history.json
+.env
+
+node_modules/
