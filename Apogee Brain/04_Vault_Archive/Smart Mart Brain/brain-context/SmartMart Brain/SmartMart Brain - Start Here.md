@@ -63,10 +63,9 @@ Cover Email ──► One-Pager ──► Walkthrough ──► Leave-Behind + O
 [[smartmart_workflow]]  
 [[smartmart_analytics]]  
 [[smartmart_risk]]  
-[[SmartMart_Live_Traffic]]
 * Linked Recap: [[Daily Summary]]
 
 ---
 
 ## Related
-- [[AI Ideas]]
+- [[03_Active_Engine/Brains/AI Ideas|AI Ideas hub]]
