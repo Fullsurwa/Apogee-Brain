@@ -9,6 +9,8 @@ $elevenVoiceId    = "dtSEyYGNJqjrtBArPCVZ"    # Titan Voice (Deep & Bold)
 
 # Auto-detect OneDrive vault path
 $obsidianVault    = Join-Path $env:OneDrive "Desktop\Dan\Apogee SKOPE LLP\Apogee Brain"
+$contentScoutPath = Join-Path $PSScriptRoot "ContentScout.ps1"
+. $contentScoutPath
 
 Write-Host "🔊 System Active. Listening for 'Hello Apogee'..."
 Write-Host "💡 Tip: Add '--voice' to the end of your sentence to generate ElevenLabs speech." -ForegroundColor Cyan
@@ -22,13 +24,18 @@ while ($true) {
         
         # Clean the input query (remove wake word and voice flag)
         $userQuery = $input.Substring(12).Replace("--voice", "").Trim()
+        $isContentScoutQuery = $userQuery -match "(?i)^\s*what should I post about\s*\??\s*$"
 
         # --- STEP 1: Read Recent Notes for Context ---
         $notesPath = "$obsidianVault\Session Logs"
-        if (-not (Test-Path $notesPath)) {
+        if (-not $isContentScoutQuery -and -not (Test-Path $notesPath)) {
             New-Item -Path $notesPath -ItemType Directory | Out-Null
         }
-        $recentNotes = Get-ChildItem -Path $notesPath -Filter *.md | Sort-Object LastWriteTime -Descending | Select-Object -First 5
+        $recentNotes = if (-not $isContentScoutQuery -and (Test-Path $notesPath)) {
+            Get-ChildItem -Path $notesPath -Filter *.md | Sort-Object LastWriteTime -Descending | Select-Object -First 5
+        } else {
+            @()
+        }
         $notesContext = ""
         if ($recentNotes) {
             $notesContext = foreach ($note in $recentNotes) { Get-Content $note.FullName -Raw }
@@ -38,7 +45,14 @@ while ($true) {
         # --- STEP 2: Handle Query (Claude API vs Free Tier Fallback) ---
         $replyText = ""
 
-        if ($claudeApiKey) {
+        if ($isContentScoutQuery) {
+            # Content Scout is deliberately read-only and isolated from the existing pipeline.
+            try {
+                $replyText = Invoke-ContentScout -VaultPath $obsidianVault -ClaudeApiKey $claudeApiKey
+            } catch {
+                $replyText = "Content Scout failed: $($_.Exception.Message)"
+            }
+        } elseif ($claudeApiKey) {
             Write-Host "🧠 Sending context to Claude API..." -ForegroundColor Yellow
             
             # Structuring payload for Claude API (Sonnet 5)
@@ -82,10 +96,12 @@ while ($true) {
         }
 
         # --- STEP 3: Save to Vault ---
-        $summaryFile = "$obsidianVault\Daily Summary.md"
-        $timestamp   = Get-Date -Format "yyyy-MM-dd HH:mm"
-        Add-Content -Path $summaryFile -Value "`n### Entry for $timestamp`n$replyText`n"
-        Write-Host "💾 Log successfully appended to Obsidian." -ForegroundColor Green
+        if (-not $isContentScoutQuery) {
+            $summaryFile = "$obsidianVault\Daily Summary.md"
+            $timestamp   = Get-Date -Format "yyyy-MM-dd HH:mm"
+            Add-Content -Path $summaryFile -Value "`n### Entry for $timestamp`n$replyText`n"
+            Write-Host "💾 Log successfully appended to Obsidian." -ForegroundColor Green
+        }
 
         # --- STEP 4: Conditional ElevenLabs Voice Output ---
         if ($enableVoice) {
