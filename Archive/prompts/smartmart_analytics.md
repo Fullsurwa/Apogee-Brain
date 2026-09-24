@@ -1,3 +1,0 @@
-/agents "Apogee, update the note 'SmartMart Brain - Bluetooth AoA Strategy'. Section: Retail Analytics & Forecasting. Detail how the SmartMart Brain digests spatial data to uncover high-traffic hotspots for 'hero product' placement, optimize shelf arrangement (eye-level vs shelf-tiles), flag product pricing or packaging friction, and generate forward-looking inventory forecasting models for procurement teams. Expand with how AI heatmaps, time-series forecasting, and NLP feedback correlation drive real-time dashboards and predictive inventory alerts."
-[[SmartMart Brain – Start Here]]  
-[[EvalLite Brain – Obsidian Master Note]]

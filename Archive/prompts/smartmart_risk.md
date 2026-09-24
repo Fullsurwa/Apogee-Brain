@@ -1,3 +1,0 @@
-/agents "Apogee, update the note 'SmartMart Brain - Bluetooth AoA Strategy'. Section: Risk Mitigation. Include a strategic section managing 'The Forgetfulness Factor' to stop shoppers from accidentally walking away with pocket pins. Outline two solutions: (A) Permanently embedding the AoA tags directly into demographic-segregated shopping baskets/trolleys at the entrance, or (B) Installing low-frequency EAS exit gates that sound a polite chime if a pin passes the checkout line. Expand with how AI logs incidents, predicts high-risk scenarios, and suggests operational adjustments."
-[[SmartMart Brain – Start Here]]  
-[[EvalLite Brain – Obsidian Master Note]]
