@@ -1910,7 +1910,11 @@ async function runSystemPipeline(transcript) {
     }
     let result;
     const calculatorResponse = deterministicCalculatorResponse(answerTranscript);
-    if (calculatorResponse) {
+    const isCalendarReadRequest = /(?:today|tomorrow)/i.test(answerTranscript) && /(?:calendar|schedule|agenda)/i.test(answerTranscript);
+    const deterministicResponse = isCalendarReadRequest ? deterministicLocalResponse(answerTranscript) : null;
+    if (deterministicResponse) {
+        result = normalizeResult(answerTranscript, JSON.stringify(deterministicResponse), 'Deterministic Local Read');
+    } else if (calculatorResponse) {
         result = normalizeResult(answerTranscript, JSON.stringify(calculatorResponse), 'Deterministic Calculator');
     } else try {
         providerCallCounts.claude++;
