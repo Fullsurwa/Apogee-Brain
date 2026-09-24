@@ -1,4 +1,4 @@
-﻿# Apogee Life CEO Dashboard
+# Apogee Life CEO Dashboard
 
 ## Schedule and Focus
 - **Meetings:** None scheduled today

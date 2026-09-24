@@ -58,6 +58,23 @@ Cover Email ──► One-Pager ──► Walkthrough ──► Leave-Behind + O
 - **Low hardware** — a handful of wall/pillar locators, not hundreds of ceiling sensors.
 - **The cart is the tracker** — embedded trolley tags solve adoption + the "Forgetfulness Factor."
 - **Prove it in one store** — fixed-scope 8-week pilot, agreed metrics, fee credited against rollout.
+
+PHASE 1: FOUNDATION & THE LIVE DEMO (Months 1-6)
+*   [ ] **Build Desktop Dev-Kit** | Procure 1 low-cost industrial AoA locator (e.g., Minew AR1) and 5 BLE test beacons to map local coordinate outputs.
+*   [ ] **Standardize the Pitch Deck** | Finalize the "Sales One-Pager (Kenya)" and align it with the live dashboard presentation.
+*   [ ] **Run Simulated Walkthroughs** | Iron out the 60-second voice-command to UI dashboard pipeline until it is second nature.
+
+## PHASE 2: LAUNCH THE SINGLE-STORE PILOT (Months 7-18)
+*   [ ] **Secure the First NDA/MOU** | Pitch a smaller local supermarket chain or warehouse zone for a zero-cost, 30-day proof-of-concept pilot.
+*   [ ] **Physical Store Survey** | Map out locator ceiling density, factoring in concrete pillars and shelving geometry.
+*   [ ] **Deploy Edge Architecture** | Set up a physical Intel NUC/mini-PC in a back office running the local fallback node.
+*   [ ] **Execute Baseline Calibration** | Define explicit floor "truth points" to lock down baseline coordinate data.
+
+##  PHASE 3: ENTERPRISE ROLLOUT & PRODUCTIZATION (Months 19-36)
+*   [ ] **Incorporate Data Compliance** | Formalize the "Enterprise Privacy Blueprint" to guarantee compliance with Kenya's Data Protection Act (2019).
+*   [ ] **Launch Multi-Site Software UI** | Transition from local host terminals to a cloud-aggregated dashboard pane.
+*   [ ] **Introduce Predictive Logistics** | Build custom automated webhooks via Make.com to trigger automated warehouse re-stocking alerts.
+
 ## Linked Components
 [[smartmart_techstack]]  
 [[smartmart_workflow]]  

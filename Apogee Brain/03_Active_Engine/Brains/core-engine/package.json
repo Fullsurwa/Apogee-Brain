@@ -1,11 +1,8 @@
 {
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.110.0",
-    "express": "^5.2.1",
-    "node-record-lpcm16": "^1.0.1",
-    "sound-play": "^1.1.0"
+    "@anthropic-ai/sdk": "^0.121.0",
+    "express": "^5.2.1"
   },
-  "name": "core-engine",
   "version": "1.0.0",
   "description": "",
   "main": "apogee_core.js",

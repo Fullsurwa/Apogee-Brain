@@ -11,7 +11,7 @@
 * **Technology Stack:** Bluetooth 5.1 Angle of Arrival (AoA) phase-shift triangulation tracking.
 * **Commercial Status:** Handover brief and rollout strategy compiled; moving toward pilot deployment.
 
-### B. Local Automation Engine (`apogee_core.js`)
+### B. Local Automation Engine (`03_Active_Engine/Brains/core-engine/apogee_core.js`)
 * **Runtime:** Node.js Express server running locally on port `3000`.
 * **Features Integrated:**
   * **Dashboard:** Real-time telemetry web UI (`http://localhost:3000`) visualizing command history and activity charts.
@@ -32,7 +32,7 @@
 ### Error 2: Anthropic API Authentication Failure (`401 Unauthorized`)
 * **What Happened:** When the local engine successfully booted and sent a test prompt to the Claude API, Anthropic rejected the credential with: `{"type":"error","error":{"type":"authentication_error","message":"API key is invalid."}}`.
 * **Root Cause:** The provided API key string was either expired, malformed during copy-pasting, or lacked valid billing/workspace association.
-* **Resolution:** A fresh, valid API key must be inserted directly into the `apogee_core.js` file or managed via local environment variables (`process.env.ANTHROPIC_API_KEY`).
+* **Resolution:** Provide a valid API key through the `ANTHROPIC_API_KEY` environment variable; never place it in engine source.
 
 ### Error 3: The Chat Amnesia & Shortcut Trap
 * **What Happened:** Stateless chat sessions caused the assistant to repeatedly fall back to generating brittle code blocks instead of establishing persistent file-based workflows.

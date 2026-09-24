@@ -1,25 +1,53 @@
-# Secrets
+# Secrets and sensitive local credentials
 .env
 .env.*
 !.env.example
-credentials.json
-token.json
+**/.env
+**/.env.*
+**/credentials.json
+**/token.json
+**/*.pem
+**/*.key
+**/*.p12
+**/*.crt
+**/*secret*
+**/*token*
+**/*credential*
 
-# Dependencies and generated local files
+# Dependency and runtime output folders
 node_modules/
 **/node_modules/
 __pycache__/
 **/__pycache__/
+*.log
+*.tmp
+*.bak
 *.mp3
 *.wav
-temp_response.mp3
+*.ogg
+**/Audio_Archive/
+**/Audio_Archives/
+**/voice_logs.txt
+**/temp_response.mp3
 
-# Obsidian local runtime state
-.obsidian/workspace.json
-.obsidian-mcp/locks/
-.obsidian-mcp/transactions/
-
-# Local cleanup artifacts
+# Obsidian and local vault runtime state
+.obsidian/
+.obsidian-mcp/
+.trash/
+ObsidianVault/
+Session Logs/
+Projects/
+Archives/
+04_Vault_Archive/
 _pre_cleanup_backup_*/
+
+# Local/private working artifacts and audits
 project_classification_audit.txt
-04_Vault_Archive/Smart Mart Brain/interaction_history.json
+**/interaction_history.json
+**/apogee_memory.json
+**/*.local.md
+**/*.private.*
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db

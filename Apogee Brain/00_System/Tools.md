@@ -8,7 +8,7 @@
 | Git / GitHub | configured `origin` remote | Version control | Connected |
 | Anthropic SDK | `package.json` | Model API in local engine | Configured; verify credentials locally |
 | Google Calendar helpers | `calendar_helper.py`, `gmail_helper.py` | Calendar/email automation | Present; verify authorization locally |
-| ElevenLabs | project dependencies and notes | Voice capability | Present; verify credentials locally |
+| Windows System.Speech | canonical core engine | Local voice output | Active; no external voice credential |
 | Notion | No local evidence | Cross-project tasks | Not connected |
 
 Do not store secrets in this note. Record setup location and owner when a new integration is added.

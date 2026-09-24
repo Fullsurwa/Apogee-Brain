@@ -2,9 +2,11 @@
   "name": "apogee-brain",
   "version": "1.0.0",
   "description": "",
-  "main": "apogee_core.js",
+  "main": "03_Active_Engine/Brains/core-engine/apogee_core.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node 03_Active_Engine/Brains/core-engine/apogee_core.js",
+    "calendar:authorize": "node scripts/provision_google_calendar_oauth.js",
+    "test": "node test/capability_handoff.test.js && node test/calendar_create.test.js && node test/calendar_oauth_provisioning.test.js && node test/authoritative_interview_evidence.test.js && node test/authoritative_interview_ingestion.test.js && node test/evidence_ledger.test.js && node test/customer_validation_skill.test.js && node test/structured_memory_failure_state.test.js && node test/normalize_result_truthful_confirmation.test.js && node test/ai_context_local_read.test.js"
   },
   "keywords": [],
   "author": "",
