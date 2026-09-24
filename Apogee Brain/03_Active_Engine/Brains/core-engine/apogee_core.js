@@ -1,3 +1,4 @@
+require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -124,49 +125,63 @@ function localIcalDate(dayOffset = 0) {
     return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
 }
 
-function syncGoogleCalendar() {
-    if (!ICAL_URL) return;
+async function syncGoogleCalendar() {
     console.log('[Calendar Sync]: Fetching latest events from Google Calendar...');
-    https.get(ICAL_URL, (res) => {
-        if (res.statusCode !== 200) {
-            console.log(`[Calendar Sync Error]: Feed returned HTTP ${res.statusCode}.`);
-            res.resume();
+    try {
+        const authentication = await getGoogleCalendarAccessToken();
+        if (!authentication.accessToken) {
+            console.log(`[Calendar Sync Error]: ${authentication.error || 'Google Calendar is not authenticated.'}`);
             return;
         }
-        let data = '';
-        res.setEncoding('utf8');
-        res.on('data', (chunk) => { data += chunk; });
-        res.on('end', () => {
-            try {
-                const events = { today: [], tomorrow: [] };
-                let event = null;
-                for (let line of data.split(/\r?\n/)) {
-                    line = line.trim();
-                    if (line === 'BEGIN:VEVENT') event = {};
-                    else if (line === 'END:VEVENT' && event) {
-                        const eventDate = event.start?.slice(0, 8);
-                        if (eventDate === localIcalDate()) events.today.push(event);
-                        if (eventDate === localIcalDate(1)) events.tomorrow.push(event);
-                        event = null;
-                    } else if (event && event.start === undefined && line.startsWith('DTSTART')) {
-                        event.start = line.split(':').slice(1).join(':');
-                    } else if (event && line.startsWith('SUMMARY:')) {
-                        event.summary = line.slice('SUMMARY:'.length);
-                    }
-                }
-                const agendaLines = (agendaEvents) => agendaEvents.length
-                    ? agendaEvents.map((calendarEvent) => {
-                        const time = calendarEvent.start?.includes('T') ? calendarEvent.start.split('T')[1].slice(0, 4) : 'All Day';
-                        return `- **${time}** - ${calendarEvent.summary || 'Untitled event'}`;
-                    }).join('\n')
-                    : '*No scheduled events found.*';
-                const markdown = `# Agenda\n*Last Synced: ${new Date().toLocaleString()}*\n\n## Today\n${agendaLines(events.today)}\n\n## Tomorrow\n${agendaLines(events.tomorrow)}\n`;
-                fs.writeFileSync(CALENDAR_PATH, markdown, 'utf8');
-            } catch (error) {
-                console.log(`[Calendar Sync Error]: Could not parse iCal data. ${error.message}`);
-            }
+
+        const today = getNairobiDate();
+        const addDays = (dateString, days) => {
+            const [year, month, day] = dateString.split('-').map(Number);
+            return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+        };
+        const tomorrowDate = addDays(today, 1);
+        const endDate = addDays(today, 2);
+
+        const response = await requestJson({
+            hostname: 'www.googleapis.com',
+            path: `/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&maxResults=50&timeMin=${encodeURIComponent(`${today}T00:00:00+03:00`)}&timeMax=${encodeURIComponent(`${endDate}T00:00:00+03:00`)}`,
+            method: 'GET',
+            headers: { Authorization: `Bearer ${authentication.accessToken}` }
         });
-    }).on('error', (error) => console.log(`[Calendar Sync Error]: Network request failed. ${error.message}`));
+
+        const events = { today: [], tomorrow: [] };
+        for (const event of response.items || []) {
+            const startValue = event.start?.dateTime || event.start?.date;
+            if (!startValue) continue;
+            const eventDate = event.start?.date || new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'Africa/Nairobi',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit'
+            }).format(new Date(startValue));
+            if (eventDate === today) events.today.push(event);
+            if (eventDate === tomorrowDate) events.tomorrow.push(event);
+        }
+
+        const agendaLines = (agendaEvents) => agendaEvents.length
+            ? agendaEvents.map((event) => {
+                if (event.start?.date) return `- **All Day** - ${event.summary || 'Untitled event'}`;
+                const time = new Intl.DateTimeFormat('en-GB', {
+                    timeZone: 'Africa/Nairobi',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false
+                }).format(new Date(event.start.dateTime));
+                return `- **${time}** - ${event.summary || 'Untitled event'}`;
+            }).join('\n')
+            : '*No scheduled events found.*';
+
+        const markdown = `# Agenda\n*Last Synced: ${new Date().toLocaleString()}*\n\n## Today\n${agendaLines(events.today)}\n\n## Tomorrow\n${agendaLines(events.tomorrow)}\n`;
+        fs.writeFileSync(CALENDAR_PATH, markdown, 'utf8');
+        console.log(`[Calendar Sync]: Calendar.md updated with ${events.today.length + events.tomorrow.length} event(s).`);
+    } catch (error) {
+        console.log(`[Calendar Sync Error]: ${error.message}`);
+    }
 }
 
 function calculateExerciseMetrics(steps) {

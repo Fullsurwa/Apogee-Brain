@@ -1,3 +1,4 @@
+require('dotenv').config();
 const crypto = require('crypto');
 const fs = require('fs');
 const http = require('http');
