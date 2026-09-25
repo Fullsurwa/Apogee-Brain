@@ -1072,6 +1072,7 @@ function classifyRequestedAction(action) {
     const lower = text.toLowerCase();
     if (/(come back|when you(?:'|â€™)re finished|in the background|later|async)/i.test(lower)) return 'BACKGROUND_TASK';
     if (parseCalendarCreateRequest(text)) return 'CALENDAR_CREATE';
+    if (/(update|change|set|replace|mark)\b[\s\S]*(current state|project state)\b/i.test(lower) && /(project|for)\b/i.test(lower)) return 'PROJECT_STATE_UPDATE';
     if (/(edit|remove|delete|add|update|change|mark)\b[\s\S]*(dashboard|vault|note|file|master dashboard)/i.test(lower)) return 'VAULT_EDIT';
     if (/(implement|change the code|fix the code|add a feature|modify the runtime|write code)/i.test(lower)) return 'CODE_CHANGE';
     if (/(researcher clarifications?|supporting market research|researcher assumption)/i.test(lower) && /(interview|customer|perfume|spray|splash|pricing|validation)/i.test(lower)) return 'ANSWER_NOW';
@@ -1290,7 +1291,7 @@ function buildCapabilityPreflight(transcript) {
         .filter(({ capability }) => capability === 'CLARIFICATION_REQUIRED')
         .map(({ action }) => action);
     const unsupported = actions.filter(({ capability }) =>
-        capability !== 'ANSWER_NOW' && capability !== 'CLARIFICATION_REQUIRED' && capability !== 'LOCAL_READ'
+        capability !== 'ANSWER_NOW' && capability !== 'CLARIFICATION_REQUIRED' && capability !== 'LOCAL_READ' && capability !== 'PROJECT_STATE_UPDATE'
     );
     const answerNow = actions
         .filter(({ capability }) => capability === 'ANSWER_NOW')
@@ -1799,6 +1800,31 @@ async function runSystemPipeline(transcript) {
         }
     }
 
+    const projectStateUpdateAction = capabilityPreflight.actions.find(({ capability }) => capability === 'PROJECT_STATE_UPDATE');
+    if (projectStateUpdateAction) {
+        const parsedProjectState = parseProjectStateUpdateRequest(projectStateUpdateAction.action);
+        const projectStateUpdate = parsedProjectState
+            ? updateProjectCurrentState(parsedProjectState.projectName, parsedProjectState.newState)
+            : { ok: false, reason: 'I could not identify the project and new current state.' };
+        const result = {
+            query: transcript,
+            timestamp: new Date().toISOString(),
+            reply: projectStateUpdate.ok
+                ? `Project state updated. I verified the written state for ${projectStateUpdate.projectName}.`
+                : `Project state update failed: ${projectStateUpdate.reason}`,
+            targetTrack: 'Project State',
+            operationalMode: 'Deterministic Project State Update',
+            systemHealthScore: '100%',
+            projectStateUpdate
+        };
+        currentDashboardData = result;
+        recordStructuredMemory(transcript, result);
+        saveInteraction(transcript, result);
+        console.log(`[Apogee Reply]: "${result.reply}"`);
+        speakLocally(result.reply);
+        promptUser();
+        return result;
+    }
     const exerciseCorrectionAction = capabilityPreflight.actions.find(({ capability }) => capability === 'EXERCISE_CORRECTION');
     if (exerciseCorrectionAction) {
         const correction = applyExerciseCorrection(exerciseCorrectionAction.action);
@@ -2004,6 +2030,76 @@ if (SHOULD_START) {
     promptUser();
 }
 
+function parseProjectStateUpdateRequest(request) {
+    const text = String(request || '').trim();
+    const match = text.match(/update\s+the\s+current\s+state\s+for\s+(.+?)\s+to\s+(.+)\s*$/i);
+    if (!match) return null;
+
+    const projectName = match[1].trim();
+    const newState = match[2].trim();
+    if (!projectName || !newState) return null;
+
+    return { projectName, newState };
+}
+function updateProjectCurrentState(projectName, newState) {
+    const normalizedProject = String(projectName || '').trim().toLowerCase();
+    const state = String(newState || '').trim();
+
+    if (!normalizedProject) {
+        return { ok: false, reason: 'The project name is required.' };
+    }
+
+    if (!state) {
+        return { ok: false, reason: 'The new current state is required.' };
+    }
+
+    const projectMappings = {
+        'perfume vending machine': path.join(
+            VAULT_PATH,
+            '03_Active_Engine',
+            'Perfume Vending Validation',
+            '_Project_Context.md'
+        )
+    };
+
+    const projectPath = projectMappings[normalizedProject];
+    if (!projectPath) {
+        return { ok: false, reason: `Unknown project: ${projectName}.` };
+    }
+
+    if (!fs.existsSync(projectPath)) {
+        return { ok: false, reason: `Authoritative project context file does not exist: ${projectPath}.` };
+    }
+
+    const content = fs.readFileSync(projectPath, 'utf8');
+    const currentStatePattern = /(^## Current state\r?\n)([\s\S]*?)(?=^## Next actions\r?$)/m;
+
+    if (!currentStatePattern.test(content)) {
+        return { ok: false, reason: 'The authoritative project context does not contain a valid Current state section.' };
+    }
+
+    const updatedContent = content.replace(
+        currentStatePattern,
+        `$1- ${state}\n\n`
+    );
+
+    fs.writeFileSync(projectPath, updatedContent, 'utf8');
+
+    const verifiedContent = fs.readFileSync(projectPath, 'utf8');
+    const verifiedMatch = verifiedContent.match(currentStatePattern);
+
+    if (!verifiedMatch || !verifiedMatch[2].includes(`- ${state}`)) {
+        return { ok: false, reason: 'Project state write could not be verified.' };
+    }
+
+    return {
+        ok: true,
+        projectName,
+        projectPath,
+        state,
+        verified: true
+    };
+}
 module.exports = {
     splitAtomicActions,
     parseCalendarCreateRequest,
@@ -2036,6 +2132,7 @@ module.exports = {
     createGoogleCalendarEvent,
     parseExerciseCorrectionRequest,
     applyExerciseCorrection,
+    updateProjectCurrentState,
     providerCallCounts
 };
 

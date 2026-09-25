@@ -34,6 +34,21 @@ fs.writeFileSync(projectPath, projectContext, 'utf8');
 process.env.APOGEE_VAULT_PATH = testVault;
 
 const core = require('../03_Active_Engine/Brains/core-engine/apogee_core.js');
+const unknownProject = core.updateProjectCurrentState('Unknown Project', 'Some state');
+assert.strictEqual(unknownProject.ok, false);
+assert.match(unknownProject.reason, /Unknown project/i);
+
+const emptyState = core.updateProjectCurrentState('Perfume Vending Machine', '');
+assert.strictEqual(emptyState.ok, false);
+assert.match(emptyState.reason, /new current state is required/i);
+
+const missingProjectPath = path.join(projectDir, '_Project_Context.md');
+fs.renameSync(missingProjectPath, missingProjectPath + '.missing');
+const missingFile = core.updateProjectCurrentState('Perfume Vending Machine', 'Should not be written.');
+assert.strictEqual(missingFile.ok, false);
+assert.match(missingFile.reason, /does not exist/i);
+fs.renameSync(missingProjectPath + '.missing', missingProjectPath);
+
 
 const request = 'Update the current state for Perfume Vending Machine to Customer interviews are now underway.';
 
