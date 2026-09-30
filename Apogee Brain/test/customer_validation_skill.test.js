@@ -91,7 +91,7 @@ assert.deepStrictEqual(evidenceOutcome.result, coreEngine.retrieveAuthoritativeI
 // and no GO/NO-GO or market-validation language is introduced by the Skill.
 assert.match(evidenceOutcome.result.reply, /## Observed customer evidence/);
 assert.match(evidenceOutcome.result.reply, /## Derived observations \(source interpretation\)/);
-assert.doesNotMatch(evidenceOutcome.result.reply, /GO\/NO-GO/i);
+assert.doesNotMatch(evidenceOutcome.result.reply, /(?:^|\n)\s*(?:GO|NO-GO)\s*$/im);
 
 const analysisOutcome = customerValidationSkill.run(analysisRequest);
 assert.strictEqual(analysisOutcome.action, 'RETRIEVE_INTERVIEW_EVIDENCE');

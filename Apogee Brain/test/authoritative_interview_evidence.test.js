@@ -6,6 +6,7 @@ process.env.APOGEE_TEST_MODE = '1';
 process.env.ANTHROPIC_API_KEY = 'test-key';
 
 const {
+    isAuthoritativeInterviewAnalysisRequest,
     isAuthoritativeInterviewEvidenceRequest,
     retrieveAuthoritativeInterviewEvidence
 } = require('../03_Active_Engine/Brains/core-engine/apogee_core.js');
@@ -23,10 +24,15 @@ const customer004Answers = [
     '6. **Most definitely, i have to choose what smells I like, its not about the brand or amount, its what I find appeasing.**'
 ];
 const evidenceRequest = 'What have we learned from the customer interviews?';
+const decisionSupportRequest = 'From the customer answers you have in your possession, which piece of evidence can you point to that can guide us on where to start? Is it Venue Trace? Is it payment implementation? What evidence do you have?';
+const pureExtractionRequest = 'Show me the customer answers.';
 const questionRequest = 'Do you have a record of the customer interview questions? Show me the questions only.';
 const evidence = retrieveAuthoritativeInterviewEvidence(evidenceRequest);
 
 assert.strictEqual(isAuthoritativeInterviewEvidenceRequest(evidenceRequest), true);
+assert.strictEqual(isAuthoritativeInterviewAnalysisRequest(decisionSupportRequest), true);
+assert.strictEqual(isAuthoritativeInterviewEvidenceRequest(pureExtractionRequest), true);
+assert.strictEqual(isAuthoritativeInterviewAnalysisRequest(pureExtractionRequest), false);
 assert.strictEqual(isAuthoritativeInterviewEvidenceRequest(questionRequest), false);
 assert.ok(evidence);
 assert.strictEqual(evidence.operationalMode, 'Deterministic Authoritative Evidence');
@@ -40,6 +46,12 @@ assert.match(evidence.reply, /7-12\. \*\*Not answered\.\*\*/);
 assert.match(evidence.reply, /Derived observations \(source interpretation\)/);
 assert.match(evidence.reply, /Validation status recorded in source/);
 assert.match(evidence.reply, /Open follow-up questions \(not findings\)/);
+assert.match(evidence.reply, /Q6 applies to all interview records: Have you ever wanted to try a fragrance before buying the whole bottle\?/);
+assert.match(evidence.reply, /## Evidence status summary from authoritative source\s+## Evidence status/);
+assert.match(evidence.reply, /Price observations currently include KSh 50, KSh 100, KSh 100\u2013200, and KSh 250/);
+for (const priceObservation of ['250kshs for a spray', 'Splash at 100 KShs', 'Kshs 100 - Kshs (Kenya shillings) 200', '50 kshs']) {
+    assert.ok(evidence.reply.includes(priceObservation), `Missing price observation: ${priceObservation}`);
+}
 assert.doesNotMatch(evidence.reply, /completed two interviews/i);
 
 const rawEvidenceStart = evidence.reply.indexOf('## Observed customer evidence');

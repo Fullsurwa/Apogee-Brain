@@ -2,7 +2,7 @@
 
 ## Schedule and Focus
 - **Meetings:** None scheduled today
-- **Primary Objective:** Build out Life CEO engine and structure vault
+- **Primary Objective:** prepare for the September 26 Apogee functional review
 
 ## Health and Habits
 - **Exercise:** Pending (Tracked in Daily Rhythms)

@@ -1,11 +1,7 @@
 ﻿# Now
 
 ## Current focus
-
-- Keep Apogee's current system stable and aligned with the architecture.
-- Establish controlled, trustworthy management of persistent Life/Project state.
-- Continue validating the natural-language → intent → capability → validated action → truthful confirmation flow.
-- Prepare for the planned **1 October 2026 Apogee review/build point**.
+- testing Apogee's persistent state management
 
 ## Next actions
 
@@ -19,3 +15,4 @@
 - Temporary notes only.
 - Move lasting decisions to the relevant context or system document.
 - Keep this page focused on **what Apogee is working on now**, not its complete history.
+

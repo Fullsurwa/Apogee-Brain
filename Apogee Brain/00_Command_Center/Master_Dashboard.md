@@ -5,6 +5,7 @@
 ---
 
 ## ⚡ Active Focus & Action Items
+- [x] verifying the Action Item capability #action
 - [ ] Conduct initial market-friction interviews in target sector #action
 - [x] Review iTax compliance and partnership documentation with Dan, James, and Solomon <!-- [due:: 2026-08-30] #action -->
 

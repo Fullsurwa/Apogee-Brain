@@ -59,7 +59,8 @@ const DEFAULT_MEMORY_STORE = {
     experiences: [],
     lessons: [],
     project_validations: [],
-    calendar_executions: []
+    calendar_executions: [],
+    pending_calendar_plan: null
 };
 const DAILY_BRIEFING_RULES = `You are Apogee, Dan's conversational executive assistant.
 
@@ -77,6 +78,8 @@ CORE BEHAVIOR:
 - Never invent missing information or fill unanswered customer-interview questions with assumptions.
 - Never claim that an action was completed, recorded, changed, sent, created, verified, or otherwise succeeded unless the available evidence establishes that it actually happened.
 - If an action could not be performed, say so plainly.
+- When a fresh actual Google Calendar read is present in the current request, treat that read as authoritative for current calendar availability; historical Master_Note or prior calendar claims are context only and must not override or contradict the fresh read.
+- When a fresh actual Google Calendar read is present in the current request, treat that read as authoritative for current calendar availability; historical Master_Note or prior calendar claims are context only and must not override or contradict the fresh read.
 - Do not repeatedly present completed work as an outstanding task unless there is a specific current reason it needs attention.
 - When multiple pieces of information are relevant, synthesize them into the answer rather than simply listing them.
 - When Dan asks what matters, prioritize what is genuinely important now.
@@ -99,9 +102,9 @@ CUSTOMER / VALIDATION EVIDENCE:
 - Clearly identify incomplete interviews and unanswered questions.
 - Never infer unanswered customer responses.
 - Distinguish observed patterns from conclusions that are not yet validated.
-- Do not call a hypothesis validated merely because several interviews support part of it.
+- When giving counts or lists, reconcile each item against interview IDs and the authoritative source; do not estimate from memory. Label customer evidence separately from source interpretation and hypotheses.
 
-Your goal is to help Dan think, decide, remember, and act � naturally and accurately.`;
+Your goal is to help Dan think, decide, remember, and act ï¿½ naturally and accurately.`;
 
 for (const filePath of [EXERCISE_PATH, CALENDAR_PATH, MASTER_NOTE_PATH, DB_PATH, MEMORY_PATH, HANDOFFS_PATH]) {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -424,16 +427,19 @@ function isAuthoritativeInterviewAnalysisRequest(transcript) {
     const command = String(transcript || '').toLowerCase();
 
     const interviewReference =
-        /(?:customer.*interview|interview.*customer|customer.*answers?|recorded answers?|customer responses?)/i.test(command);
+        /(?:customer.*interview|interview.*customer|customer.*answers?|recorded answers?|customer.*evidence|customer responses?)/i.test(command);
 
     const analysisIntent =
-        /(?:analys[ei]s|analyse|analyze|where.*evidence.*points|what.*evidence.*means|what.*does.*this.*mean|synthesi[sz]e|patterns?|supporting evidence|contradictory evidence|market friction|underlying friction|recurring|differences|unvalidated)/i.test(command);
+        /(?:analys[ei]s|analyse|analyze|where.*evidence.*points|what.*evidence.*means|what.*does.*this.*mean|synthesi[sz]e|patterns?|supporting evidence|contradictory evidence|market friction|underlying friction|recurring|differences|unvalidated|(?:what|which).*evidence.*(?:points? toward|guide)|where to start|next validation activity|what uncertainty|uncertaint(?:y|ies).*(?:resolve|remain|address))/i.test(command);
 
-    return interviewReference && analysisIntent;
+    const validationPlanningIntent =
+        /(?:validation plan|plan (?:for|to) (?:validation|interview)|what.*investigat(?:e|ion).*(?:next|first)|what.*(?:ask|questions?)|what.*evidence.*(?:obtain|collect|gather)|what would make us.*(?:continue|change direction|stop)|move.*validation.*forward|(?:want|need|plan).*?(?:conduct|schedule|meet|introduction)|(?:first|next)\s+(?:three|3)\s+.*?(?:introduction|meeting|interview)|choose.*?(?:available|open).*?(?:slot|window)|space.*?(?:meeting|conversation|interview)|validation objective)/i.test(command);
+
+    return interviewReference && (analysisIntent || validationPlanningIntent);
 }
 function isAuthoritativeInterviewEvidenceRequest(transcript) {
     const command = String(transcript || '').toLowerCase();
-    const interviewReference = /(?:customer.*interview|interview.*customer|customer.*answers?|recorded answers?|customer responses?|customer\s*#?\s*\d+)/i.test(command);
+    const interviewReference = /(?:customer.*interview|interview.*customer|customer.*answers?|recorded answers?|customer.*evidence|customer responses?|customer\s*#?\s*\d+)/i.test(command);
     const evidenceIntent = /(?:learn|evidence|finding|what.*found|recorded|answers?|responses?|where.*reached|progress|status|what.*have.*so far|search.*for.*them|recover)/i.test(command);
 
     return interviewReference
@@ -596,7 +602,12 @@ function retrieveAuthoritativeInterviewEvidence(transcript, frameworkPath = AUTH
         const strength = block.match(/#### Evidence (?:strength|assessment)\s*([\s\S]*?)(?=\nThis interview does not validate)/i)?.[1]?.trim() || '(No evidence assessment recorded.)';
         return `${title}\n${strength}`;
     }).join('\n\n');
+    const evidenceStatusStart = framework.indexOf('## Evidence status');
     const researcherNotesStart = framework.indexOf('## Researcher Clarifications and Supporting Market Research');
+    const evidenceStatusEnd = framework.indexOf('## Researcher Clarifications and Supporting Market Research', evidenceStatusStart);
+    const evidenceStatus = evidenceStatusStart >= 0
+        ? framework.slice(evidenceStatusStart, evidenceStatusEnd >= 0 ? evidenceStatusEnd : undefined).trim()
+        : '(No overall evidence status summary recorded in source.)';
     const researcherNotes = researcherNotesStart >= 0
         ? framework.slice(researcherNotesStart).trim()
         : '(No researcher clarification or supporting market research section recorded.)';
@@ -608,6 +619,8 @@ function retrieveAuthoritativeInterviewEvidence(transcript, frameworkPath = AUTH
         operationalMode: 'Deterministic Authoritative Evidence',
         reply: [
             `Customer interviews recorded in authoritative source: ${interviewBlocks.length}.`,
+            '## Interview question mapping',
+            'Q6 applies to all interview records: Have you ever wanted to try a fragrance before buying the whole bottle?',
             '## Observed customer evidence',
             rawEvidence,
             '## Derived observations (source interpretation)',
@@ -616,29 +629,12 @@ function retrieveAuthoritativeInterviewEvidence(transcript, frameworkPath = AUTH
             validationStatus,
             '## Open follow-up questions (not findings)',
             followUps,
+            '## Evidence status summary from authoritative source',
+            evidenceStatus,
             '## Researcher clarifications and supporting market research',
             researcherNotes
         ].join('\n\n')
     };
-}
-
-function recentVaultNotes() {
-    const notes = [];
-    const excludedFolders = new Set(['.obsidian', 'node_modules', '.git', '04_Vault_Archive', '00_System']);
-    function scan(folder) {
-        for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
-            if (entry.isDirectory()) {
-                if (!excludedFolders.has(entry.name)) scan(path.join(folder, entry.name));
-            } else if (entry.isFile() && entry.name.endsWith('.md')) {
-                const filePath = path.join(folder, entry.name);
-                notes.push({ filePath, modified: fs.statSync(filePath).mtimeMs });
-            }
-        }
-    }
-    try { scan(VAULT_PATH); } catch { return '(Could not scan vault notes.)'; }
-    return notes.sort((a, b) => b.modified - a.modified).slice(0, 5).map(({ filePath }) => {
-        return `### ${path.relative(VAULT_PATH, filePath)}\n${readFileTail(filePath, 900)}`;
-    }).join('\n\n');
 }
 
 function readMemoryStore() {
@@ -650,7 +646,8 @@ function readMemoryStore() {
             experiences: Array.isArray(parsed.experiences) ? parsed.experiences : [],
             lessons: Array.isArray(parsed.lessons) ? parsed.lessons : [],
             project_validations: Array.isArray(parsed.project_validations) ? parsed.project_validations : [],
-            calendar_executions: Array.isArray(parsed.calendar_executions) ? parsed.calendar_executions : []
+            calendar_executions: Array.isArray(parsed.calendar_executions) ? parsed.calendar_executions : [],
+            pending_calendar_plan: parsed.pending_calendar_plan && typeof parsed.pending_calendar_plan === 'object' ? parsed.pending_calendar_plan : null
         };
     } catch {
         return JSON.parse(JSON.stringify(DEFAULT_MEMORY_STORE));
@@ -688,44 +685,203 @@ function recordCalendarExecution(originalRequest, calendarResult) {
     return appendMemoryEntry('calendar_executions', record);
 }
 
+
+function persistPendingCalendarPlan(plan) {
+    const store = readMemoryStore();
+    store.pending_calendar_plan = plan;
+    fs.writeFileSync(MEMORY_PATH, JSON.stringify(store, null, 2), 'utf8');
+    return plan;
+}
+
+function clearPendingCalendarPlan() {
+    const store = readMemoryStore();
+    store.pending_calendar_plan = null;
+    fs.writeFileSync(MEMORY_PATH, JSON.stringify(store, null, 2), 'utf8');
+}
+
+function getPendingCalendarPlan() {
+    const plan = readMemoryStore().pending_calendar_plan;
+    return plan && plan.status === 'PENDING' && plan.capability === 'CALENDAR_CREATE' && Array.isArray(plan.events) ? plan : null;
+}
+
+function hasCalendarReminderRequest(text) {
+    const value = String(text || '');
+    return /\b(?:(?:one|a)\s+day\s+before|day[\s-]+before|24\s+hours\s+before)\b/i.test(value)
+        && /\b6(?::00)?\s*a\.?m\.?\b[\s\S]*\bsame[ -]day\b/i.test(value);
+}
+
+function parseProposalDate(text, defaultYear) {
+    const value = String(text || '');
+    const iso = value.match(/\b(20\d{2})-(\d{2})-(\d{2})\b/);
+    if (iso) return iso[1] + '-' + iso[2] + '-' + iso[3];
+    const months = CALENDAR_PROPOSAL_MONTHS;
+    const monthFirst = value.match(new RegExp('\\b(' + months + ')\\s+(\\d{1,2})(?:st|nd|rd|th)?[,]?(?:\\s+(20\\d{2}))?\\b', 'i'));
+    const dayFirst = value.match(new RegExp('\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(' + months + ')[,]?\\s*(20\\d{2})?\\b', 'i'));
+    if (!monthFirst && !dayFirst) return null;
+    const year = Number((monthFirst && monthFirst[3]) || (dayFirst && dayFirst[3]) || defaultYear);
+    const monthName = (monthFirst ? monthFirst[1] : dayFirst[2]).toLowerCase();
+    const day = Number(monthFirst ? monthFirst[2] : dayFirst[1]);
+    const monthIndex = CALENDAR_MONTHS[monthName] ?? CALENDAR_MONTHS[Object.keys(CALENDAR_MONTHS).find((name) => name.startsWith(monthName))];
+    const month = monthIndex + 1;
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (!Number.isInteger(year) || date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+    return year + '-' + String(month).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+}
+
+function parseProposalClock(hourValue, minuteValue, meridiemValue) {
+    let hour = Number(hourValue);
+    const minute = Number(minuteValue || 0);
+    const meridiem = String(meridiemValue || '').toUpperCase().replace(/\./g, '');
+    if (minute < 0 || minute > 59 || hour < 0 || hour > 23) return null;
+    if (meridiem) {
+        if (hour < 1 || hour > 12) return null;
+        hour = meridiem === 'AM' ? hour % 12 : (hour % 12) + 12;
+    }
+    return { time: String(hour).padStart(2, '0') + ':' + String(minute).padStart(2, '0'), minutes: hour * 60 + minute };
+}
+
+function parseCalendarProposalSlot(line, defaultYear) {
+    const text = String(line || '');
+    const date = parseProposalDate(text, defaultYear);
+    if (!date) return null;
+    const iso = text.match(/\b20\d{2}-\d{2}-\d{2}\b/);
+    const dateMatch = iso || text.match(new RegExp('\\b(?:' + CALENDAR_PROPOSAL_MONTHS + ')\\s+\\d{1,2}(?:st|nd|rd|th)?[,]?(?:\\s+20\\d{2})?\\b|\\b\\d{1,2}(?:st|nd|rd|th)?\\s+(?:' + CALENDAR_PROPOSAL_MONTHS + ')[,]?\\s*(?:20\\d{2})?\\b', 'i'));
+    const tail = text.slice(dateMatch.index + dateMatch[0].length);
+    const range = tail.match(/\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?\s*[-\u2013]\s*(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?/i);
+    let clock;
+    let durationMinutes = 60;
+    if (range) {
+        const startPeriod = range[3] || range[6] || '';
+        const endPeriod = range[6] || range[3] || '';
+        clock = parseProposalClock(range[1], range[2], startPeriod);
+        const end = parseProposalClock(range[4], range[5], endPeriod);
+        if (clock && end && end.minutes > clock.minutes) durationMinutes = end.minutes - clock.minutes;
+    } else {
+        const time = tail.match(/\b(?:at\s+)?(\d{1,2})(?::([0-5]\d))?\s*(a\.?m\.?|p\.?m\.?)?/i);
+        if (!time || (!time[2] && !time[3])) return null;
+        clock = parseProposalClock(time[1], time[2], time[3]);
+    }
+    if (!clock) return null;
+    const explicitDuration = tail.match(/\bfor\s+(\d+)\s*(minutes?|mins?|hours?|hrs?)\b/i);
+    if (explicitDuration) durationMinutes = Number(explicitDuration[1]) * (/hour|hr/i.test(explicitDuration[2]) ? 60 : 1);
+    return { date, startTime: clock.time, durationMinutes };
+}
+
+function deriveProposedCalendarTitle(request, index) {
+    const value = String(request || '');
+    if (/perfume\s+vending\s+validation/i.test(value) && /gym[ -]owner/i.test(value)) {
+        return 'Perfume Vending Validation - Gym-Owner Introduction #' + (index + 1);
+    }
+    const subject = value.match(/([a-z][a-z0-9 -]{1,45}?)\s+meetings?\b/i);
+    if (subject) {
+        const cleaned = subject[1].replace(/\b(?:three|four|five|two|30-minute|45-minute)\b/ig, '').replace(/\s+/g, ' ').trim();
+        if (cleaned) return cleaned.replace(/^[- ]+|[- ]+$/g, '') + ' Meeting #' + (index + 1);
+    }
+    return 'Proposed Meeting #' + (index + 1);
+}
+
+function maybePersistProposedCalendarPlan(request, reply) {
+    const userText = String(request || '');
+    if (!/(?:calendar|meetings?|schedule|available windows|time slots)/i.test(userText)
+        || !/(?:propose|identify|choose|suggest|available|open windows|suitable)/i.test(userText)
+        || !/\b(?:proposed?|proposal|candidate)\b/i.test(reply)
+        || !/(?:nothing is booked|not booked|not been booked|not created|not scheduled|say the word.{0,40}create)/i.test(reply)) return null;
+    const yearMatch = userText.match(/\b(20\d{2})\b/);
+    if (!yearMatch) return null;
+    const slots = String(reply || '').split(/\r?\n/).map((line) => parseCalendarProposalSlot(line, Number(yearMatch[1]))).filter(Boolean);
+    const unique = [];
+    for (const slot of slots) {
+        if (!unique.some((item) => item.date === slot.date && item.startTime === slot.startTime)) unique.push(slot);
+    }
+    if (unique.length < 2) return null;
+    const remindersRequested = hasCalendarReminderRequest(userText);
+    const events = unique.map((slot, index) => ({
+        ...slot,
+        title: deriveProposedCalendarTitle(userText, index),
+        location: null,
+        description: null,
+        remindersRequested
+    }));
+    return persistPendingCalendarPlan({ capability: 'CALENDAR_CREATE', status: 'PENDING', createdAt: new Date().toISOString(), timezone: process.env.GOOGLE_CALENDAR_TIMEZONE || 'Africa/Nairobi', events });
+}
+
+function isAffirmativeCalendarPlanExecution(text) {
+    const value = String(text || '');
+    const referencesPlan = /\b(?:proposed|those|them|these|the\s+(?:two|three|four|five)\s+(?:(?:proposed|initial)\s+)?(?:meetings?|events?|slots?)|(?:those|these)\s+(?:calendar\s+)?(?:events?|dates|slots|meetings?))\b/i.test(value);
+    const positiveIntent = value.replace(/\b(?:do not|don't|dont)\b[^.!?]*/gi, '');
+    const executionIntent = /\b(?:yes|go ahead|book|schedule|create|use)\b/i.test(positiveIntent);
+    return referencesPlan && executionIntent;
+}
+
+function calendarReminderOverrides(parsed, requestText) {
+    if (!parsed.remindersRequested && !hasCalendarReminderRequest(requestText)) return { requested: false, overrides: [] };
+    const parts = String(parsed.startTime || '').split(':').map(Number);
+    const minutesAfterMidnight = parts[0] * 60 + parts[1];
+    if (!Number.isInteger(minutesAfterMidnight) || minutesAfterMidnight < 360) {
+        return { requested: true, error: 'A 6:00 AM reminder cannot be represented as a reminder before an event that starts before 6:00 AM.' };
+    }
+    return { requested: true, overrides: [
+        { method: 'popup', minutes: 1440 },
+        { method: 'popup', minutes: minutesAfterMidnight - 360 }
+    ] };
+}
+
+function calendarEventBatchReply(results) {
+    const succeeded = results.filter((item) => item.result.ok).length;
+    if (results.length === 1) {
+        const item = results[0];
+        if (!item.result.ok) return 'Google Calendar event was not created. ' + item.result.reason;
+        const actualStart = item.result.actualEvent?.startDateTime;
+        const schedule = actualStart ? ' Written schedule: ' + item.result.actualEvent.title + ' at ' + actualStart + '.' : ' Requested schedule: ' + item.event.date + ' ' + item.event.startTime + ' (Google did not return start/end fields for verification).';
+        const reminderNote = item.remindersRequested ? (item.result.remindersVerified ? ' Requested reminders were returned and verified.' : ' The event was created, but Google did not return reminder data to verify the requested reminders.') : '';
+        return 'Google Calendar event created successfully. Event ID: ' + item.result.eventId + '.' + schedule + reminderNote;
+    }
+    const lines = results.map((item, index) => {
+        const event = item.event;
+        if (!item.result.ok) return 'Event ' + (index + 1) + ': not created (' + event.title + ', ' + event.date + ' ' + event.startTime + ') - ' + item.result.reason;
+        const actualStart = item.result.actualEvent?.startDateTime;
+        const schedule = actualStart ? item.result.actualEvent.title + ' at ' + actualStart : event.title + ' at ' + event.date + ' ' + event.startTime + ' (submitted; schedule fields not returned)';
+        const reminder = item.remindersRequested ? (item.result.remindersVerified ? ' Reminders verified.' : ' Reminders not verified by the API response.') : '';
+        return 'Event ' + (index + 1) + ': created - ' + schedule + ', ' + event.durationMinutes + ' minutes, ID: ' + item.result.eventId + '.' + reminder;
+    });
+    return ['Created ' + succeeded + ' of ' + results.length + ' calendar events.', ...lines].join('\n');
+}
+
+async function executeCalendarEventBatch(events, originalRequest) {
+    const results = [];
+    for (const request of events) {
+        const result = await createGoogleCalendarEvent(request, https.request, originalRequest);
+        const event = result.parsed || (typeof request === 'object' ? request : {});
+        recordCalendarExecution(originalRequest, { ...result, parsed: result.parsed });
+        results.push({ event, result, remindersRequested: Boolean(event.remindersRequested || hasCalendarReminderRequest(originalRequest)) });
+    }
+    return results;
+}
+
+
 function findCalendarExecution(transcript) {
     const text = String(transcript || '').trim().toLowerCase();
-    if (!text || !/(calendar|schedule|scheduled|meeting|appointment|event)/i.test(text)) return null;
-    if (!/(did|was|were|actually|really|created|scheduled|booked|added|go through|go through)/i.test(text)) return null;
+    if (!text || parseCalendarReadRequest(text)) return null;
+    if (!/\b(?:did|does|do|was|were|has|have|is)\b[\s\S]*\b(?:created|scheduled|booked|added|go through)\b/i.test(text)) return null;
 
     const store = readMemoryStore();
     const executions = Array.isArray(store.calendar_executions) ? store.calendar_executions : [];
     if (!executions.length) return { status: 'NOT_FOUND' };
 
-    const terms = [...new Set(
-        text.match(/[a-z][a-z0-9-]{2,}/g) || []
-    )].filter((term) => !new Set([
-        'calendar', 'schedule', 'scheduled', 'meeting', 'appointment',
-        'event', 'did', 'was', 'were', 'actually', 'really', 'created',
-        'booked', 'added', 'that', 'the', 'you', 'it', 'go', 'through'
-    ]).has(term));
+    const matches = executions.filter((entry) => {
+        const title = String(entry.title || '').trim().toLowerCase();
+        const eventId = String(entry.eventId || '').trim().toLowerCase();
+        const exactTitle = title.length >= 4 && text.includes(title);
+        const exactEventId = eventId && text.includes(eventId);
+        const exactDateAndTime = entry.date && entry.startTime
+            && text.includes(String(entry.date).toLowerCase())
+            && text.includes(String(entry.startTime).toLowerCase());
+        return exactTitle || exactEventId || exactDateAndTime;
+    });
 
-    const scored = executions.map((entry) => {
-        const haystack = [
-            entry.title,
-            entry.originalRequest,
-            entry.date,
-            entry.startTime
-        ].filter(Boolean).join(' ').toLowerCase();
-
-        const score = terms.reduce((total, term) => total + (haystack.includes(term) ? 1 : 0), 0);
-        return { entry, score };
-    }).filter(({ score }) => score > 0)
-      .sort((a, b) => b.score - a.score);
-
-    if (!scored.length) return { status: 'NOT_FOUND' };
-
-    return {
-        status: scored[0].entry.status,
-        entry: scored[0].entry
-    };
+    if (matches.length !== 1) return { status: 'NOT_FOUND' };
+    return { status: matches[0].status, entry: matches[0] };
 }
-
 function normalizeValidationStatus(status) {
     const value = String(status || 'UNVALIDATED').toUpperCase();
     return VALIDATION_LIFECYCLE.includes(value) ? value : 'UNVALIDATED';
@@ -817,18 +973,20 @@ function retrieveRelevantVaultMaterial(transcript, maxCharacters = 6000) {
         .map((term) => term.toLowerCase())
         .filter((term) => !stopWords.has(term) && term.length >= 4))];
 
-    const excludedFolders = new Set(['.obsidian', 'node_modules', '.git', '04_Vault_Archive', '00_System']);
+    const excludedArtifacts = /(?:^|[\\/])(?:\.obsidian(?:-mcp)?|\.git|\.trash|node_modules|00_system|04_vault_archive|session logs|archives?|exports?|tests?|dev(?:elopment)?|backups?|recovery|recoveries|troubleshooting|scratch)(?:[\\/]|$)|(?:^|[_ .-])(?:backup|bak|recovery|recovered|archive|export|test|troubleshooting|scratch|debug|builder)(?:[_ .-]|$)/i;
     const matches = [];
 
     function scan(folder) {
         for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
             if (entry.isDirectory()) {
-                if (!excludedFolders.has(entry.name)) scan(path.join(folder, entry.name));
+                const relativePath = path.relative(VAULT_PATH, path.join(folder, entry.name));
+                if (!excludedArtifacts.test(relativePath)) scan(path.join(folder, entry.name));
             } else if (entry.isFile() && entry.name.endsWith('.md')) {
                 const filePath = path.join(folder, entry.name);
                 const masterPath = path.join(VAULT_PATH, 'Session Logs', 'Master_Note.md');
+                const relativePath = path.relative(VAULT_PATH, filePath);
 
-                if (path.normalize(filePath).toLowerCase() === path.normalize(masterPath).toLowerCase()) {
+                if (path.normalize(filePath).toLowerCase() === path.normalize(masterPath).toLowerCase() || excludedArtifacts.test(relativePath)) {
                     continue;
                 }
 
@@ -862,20 +1020,6 @@ function retrieveRelevantVaultMaterial(transcript, maxCharacters = 6000) {
     const material = [];
     let remaining = maxCharacters;
 
-    try {
-        const masterPath = path.join(VAULT_PATH, 'Session Logs', 'Master_Note.md');
-        const master = fs.readFileSync(masterPath, 'utf8');
-        const interactionMatches = [...master.matchAll(/^### Apogee Interaction\b/gm)];
-
-        if (interactionMatches.length) {
-            const start = interactionMatches[interactionMatches.length - 1].index;
-            const latestEntry = master.slice(start).trim();
-            const continuityBlock = `### Latest Master_Note Entry\n${latestEntry}`.slice(0, 1500);
-            material.push(continuityBlock);
-            remaining -= continuityBlock.length;
-        }
-    } catch { }
-
     for (const match of matches) {
         if (remaining <= 0) break;
 
@@ -899,38 +1043,41 @@ const CALENDAR_MONTHS = {
     january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
     july: 6, august: 7, september: 8, october: 9, november: 10, december: 11
 };
+const CALENDAR_PROPOSAL_MONTHS = Object.keys(CALENDAR_MONTHS).flatMap((month) => [month, month.slice(0, 3)]).join('|');
 
 function parseCalendarCreateRequest(request) {
     const text = String(request || '').trim();
+    if (/\badd\b[\s\S]*\bactive priorities\b/i.test(text)) return null;
     const intent = text.match(/^(?:please\s+)?(?:schedule|create|book|add|set up)\s+(.+)$/i);
     if (!intent || !/(?:calendar|event|meeting|appointment|call|reminder|schedule|book)/i.test(text)) return null;
 
     const body = intent[1].trim();
-    const dateMatch = body.match(/(?:(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)[,\s-]+)?(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{4})/i);
+    const dateMatch = body.match(/(?:(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)[,\s-]+)?(?:(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{4})|(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s+(\d{4}))/i);
     const isoDateMatch = body.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
     const weekdayOnly = body.match(/\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i);
     const date = dateMatch
-        ? `${dateMatch[3]}-${String(CALENDAR_MONTHS[dateMatch[2].toLowerCase()] + 1).padStart(2, '0')}-${String(Number(dateMatch[1])).padStart(2, '0')}`
+        ? `${dateMatch[3] || dateMatch[6]}-${String(CALENDAR_MONTHS[(dateMatch[2] || dateMatch[4]).toLowerCase()] + 1).padStart(2, '0')}-${String(Number(dateMatch[1] || dateMatch[5])).padStart(2, '0')}`
         : isoDateMatch ? `${isoDateMatch[1]}-${isoDateMatch[2]}-${isoDateMatch[3]}` : null;
-    const timeMatch = body.match(/\b(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\b/i) || body.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
+    const timeMatch = body.match(/\b(\d{1,2})(?::(\d{2}))?\s*(A\.?M\.?|P\.?M\.?)\b/i) || body.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
     let startTime = null;
     if (timeMatch) {
         const hour = Number(timeMatch[1]);
         const minute = Number(timeMatch[2] || 0);
-        const meridiem = timeMatch[3]?.toUpperCase();
+        const meridiem = timeMatch[3]?.toUpperCase().replace(/\./g, '');
         if (meridiem && (hour < 1 || hour > 12)) return { error: 'The event time is invalid.' };
         const normalizedHour = meridiem === 'AM' ? hour % 12 : meridiem === 'PM' ? (hour % 12) + 12 : hour;
         startTime = `${String(normalizedHour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
     }
     const dateStart = dateMatch?.index ?? isoDateMatch?.index;
-    const titleEnd = dateStart === undefined ? body.search(/\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b|\b\d{1,2}\s+(?:january|february|march|april|may|june|july|august|september|october|november|december)\b|\b\d{4}-\d{2}-\d{2}\b/i) : dateStart;
+    const titleEnd = dateStart === undefined ? body.search(/\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b|\b\d{1,2}\s+(?:january|february|march|april|may|june|july|august|september|october|november|december)\b|\b(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2},?\s+\d{4}\b|\b\d{4}-\d{2}-\d{2}\b/i) : dateStart;
     const durationMatch = body.match(/\bfor\s+(\d+)\s*(minutes?|mins?|hours?|hrs?)\b/i);
     const title = body.slice(0, titleEnd < 0 ? body.length : titleEnd)
-        .replace(durationMatch ? /\s+for\s*$/i : /$^/, '')
-        .replace(/[â€”â€“-]+\s*$/, '')
+        .replace(/\s+for\s*$/i, '')
+        .replace(/\s+on\s*$/i, '')
+        .replace(/[Ã¢â‚¬â€Ã¢â‚¬â€œ-]+\s*$/, '')
         .trim();
     const durationMinutes = durationMatch ? Number(durationMatch[1]) * (/hour|hr/i.test(durationMatch[2]) ? 60 : 1) : 60;
-    const locationMatch = body.match(/\bat\s+(?!\d)([^,.;]+?)(?=\s+(?:for|about|described as)\b|[,.;]|$)/i);
+    const locationMatch = body.match(/\bat\s+(?!\d)([^,.;]+?)(?=\s+(?:for|about|described as)\b|\s+on\s+(?:(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b|\d{1,2}\b|(?:january|february|march|april|may|june|july|august|september|october|november|december)\b)|[,.;]|$)/i);
     const descriptionMatch = body.match(/\b(?:about|described as)\s+(.+)$/i);
     if (!title) return { error: 'I need an event title.' };
     if (!date || weekdayOnly && !date) return { error: 'I need an unambiguous calendar date, including day, month, and year.' };
@@ -939,6 +1086,200 @@ function parseCalendarCreateRequest(request) {
     return { title, date, startTime, durationMinutes, location: locationMatch?.[1]?.trim() || null, description: descriptionMatch?.[1]?.trim() || null };
 }
 
+function parseCalendarReadRequest(request) {
+    const text = String(request || '').trim();
+    const command = text.toLowerCase();
+    if (!/(?:calendar|agenda|schedule)/i.test(command)) return null;
+    const positiveIntent = command.replace(/\b(?:do not|don't|dont)\b[^.!?]*/gi, '');
+    if (/\b(?:create|book|add|delete|remove|modify|change|update)\b/i.test(positiveIntent) || /\bschedule\s+(?:(?:a|an|the|three)\s+)?(?:event|meeting|appointment)\b/i.test(positiveIntent)) return null;
+    if (!/\b(?:check|look|show|read|view|inspect|what)\b/i.test(command)) return null;
+
+    const months = 'january|february|march|april|may|june|july|august|september|october|november|december';
+    const monthNumbers = { january: '01', february: '02', march: '03', april: '04', may: '05', june: '06', july: '07', august: '08', september: '09', october: '10', november: '11', december: '12' };
+    let startDate = null;
+    let endDate = null;
+    const isoRange = command.match(/\b(\d{4}-\d{2}-\d{2})\s+(?:through|thru|to|until)\s+(\d{4}-\d{2}-\d{2})\b/i);
+    const monthFirstRange = command.match(new RegExp('\\b(' + months + ')\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:\\s+(?:through|thru|to|until)\\s+|\\s*[-\\u2013]\\s*)(?:(' + months + ')\\s+)?(\\d{1,2})(?:st|nd|rd|th)?[,]?\\s+(\\d{4})\\b', 'i'));
+    const dayFirstRange = command.match(new RegExp('\\b(\\d{1,2})\\s+(' + months + ')(?:\\s+(?:through|thru|to|until)\\s+|\\s*[-\\u2013]\\s*)(\\d{1,2})(?:st|nd|rd|th)?\\s+(' + months + ')?,?\\s*(\\d{4})\\b', 'i'));
+    const monthFirstSingle = command.match(new RegExp('\\b(' + months + ')\\s+(\\d{1,2})(?:st|nd|rd|th)?[,]?\\s+(\\d{4})\\b', 'i'));
+    const dayFirstSingle = command.match(new RegExp('\\b(\\d{1,2})\\s+(' + months + ')\\s+(\\d{4})\\b', 'i'));
+    const validDate = (year, month, day) => {
+        const value = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+        return value.getUTCFullYear() === Number(year) && value.getUTCMonth() === Number(month) - 1 && value.getUTCDate() === Number(day);
+    };
+    if (isoRange) {
+        startDate = isoRange[1];
+        endDate = isoRange[2];
+    } else if (monthFirstRange) {
+        const year = Number(monthFirstRange[5]);
+        const firstMonth = monthNumbers[monthFirstRange[1].toLowerCase()];
+        const lastMonth = monthNumbers[(monthFirstRange[3] || monthFirstRange[1]).toLowerCase()];
+        startDate = year + '-' + firstMonth + '-' + String(Number(monthFirstRange[2])).padStart(2, '0');
+        endDate = year + '-' + lastMonth + '-' + String(Number(monthFirstRange[4])).padStart(2, '0');
+    } else if (dayFirstRange) {
+        const year = Number(dayFirstRange[5]);
+        const firstMonth = monthNumbers[dayFirstRange[2].toLowerCase()];
+        const lastMonth = monthNumbers[(dayFirstRange[4] || dayFirstRange[2]).toLowerCase()];
+        startDate = year + '-' + firstMonth + '-' + String(Number(dayFirstRange[1])).padStart(2, '0');
+        endDate = year + '-' + lastMonth + '-' + String(Number(dayFirstRange[3])).padStart(2, '0');
+    } else if (monthFirstSingle) {
+        const year = Number(monthFirstSingle[3]);
+        startDate = year + '-' + monthNumbers[monthFirstSingle[1].toLowerCase()] + '-' + String(Number(monthFirstSingle[2])).padStart(2, '0');
+        endDate = startDate;
+    } else if (dayFirstSingle) {
+        const year = Number(dayFirstSingle[3]);
+        startDate = year + '-' + monthNumbers[dayFirstSingle[2].toLowerCase()] + '-' + String(Number(dayFirstSingle[1])).padStart(2, '0');
+        endDate = startDate;
+    } else {
+        const isoSingle = command.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+        if (!isoSingle) return null;
+        startDate = isoSingle[1];
+        endDate = startDate;
+    }
+    const [startYear, startMonth, startDay] = startDate.split('-');
+    const [endYear, endMonth, endDay] = endDate.split('-');
+    if (!validDate(startYear, startMonth, startDay) || !validDate(endYear, endMonth, endDay) || startDate > endDate) return null;
+    const rangeDays = (Date.parse(endDate + 'T00:00:00Z') - Date.parse(startDate + 'T00:00:00Z')) / 86400000 + 1;
+    if (rangeDays > 31) return { startDate, endDate, error: 'Calendar reads are limited to a 31-day range.' };
+    const durationMatch = command.match(/\b(\d{1,3})\s*[- ]?\s*(?:minutes?|mins?)\b/i);
+    return {
+        startDate,
+        endDate,
+        durationMinutes: durationMatch ? Number(durationMatch[1]) : null,
+        availabilityRequested: /\b(?:open|available|free|window|windows|slot|slots)\b/i.test(command)
+    };
+}
+
+function addCalendarDays(dateString, days) {
+    const [year, month, day] = dateString.split('-').map(Number);
+    return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
+function calendarLocalDate(value) {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Africa/Nairobi', year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(new Date(value));
+    const part = (type) => parts.find((item) => item.type === type).value;
+    return part('year') + '-' + part('month') + '-' + part('day');
+}
+
+function formatCalendarEvent(event) {
+    const summary = String(event.summary || 'Untitled event');
+    if (event.start?.date) return '- ' + event.start.date + ' (all day): ' + summary;
+    if (!event.start?.dateTime) return '- Time unavailable: ' + summary;
+    const formatter = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Africa/Nairobi', year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', hour12: false
+    });
+    const start = formatter.format(new Date(event.start.dateTime));
+    const end = event.end?.dateTime ? formatter.format(new Date(event.end.dateTime)) : 'end time unavailable';
+    return '- ' + start + ' to ' + end + ': ' + summary;
+}
+
+function calendarLocalTime(value) {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Africa/Nairobi', hour: '2-digit', minute: '2-digit', hour12: false
+    }).formatToParts(new Date(value));
+    const part = (type) => parts.find((item) => item.type === type).value;
+    return part('hour') + ':' + part('minute');
+}
+function calculateAvailableCalendarWindows(events, startDate, endDate, durationMinutes) {
+    const windows = [];
+    for (let date = startDate; date <= endDate; date = addCalendarDays(date, 1)) {
+        const weekday = new Date(date + 'T12:00:00Z').getUTCDay();
+        if (weekday === 0 || weekday === 6) continue;
+        const workStart = new Date(date + 'T09:00:00+03:00').getTime();
+        const workEnd = new Date(date + 'T17:00:00+03:00').getTime();
+        const busy = [];
+        for (const event of events) {
+            if (event.status === 'cancelled' || event.transparency === 'transparent') continue;
+            let eventStart;
+            let eventEnd;
+            if (event.start?.date) {
+                const allDayEnd = event.end?.date || addCalendarDays(event.start.date, 1);
+                if (!(event.start.date <= date && allDayEnd > date)) continue;
+                eventStart = workStart;
+                eventEnd = workEnd;
+            } else if (event.start?.dateTime && event.end?.dateTime) {
+                eventStart = new Date(event.start.dateTime).getTime();
+                eventEnd = new Date(event.end.dateTime).getTime();
+                if (!Number.isFinite(eventStart) || !Number.isFinite(eventEnd)) { busy.push([workStart, workEnd]); continue; }
+                if (!(eventStart < workEnd && eventEnd > workStart)) continue;
+            } else {
+                if (event.start?.dateTime && !Number.isFinite(Date.parse(event.start.dateTime))) { busy.push([workStart, workEnd]); continue; }
+                busy.push([workStart, workEnd]);
+                continue;
+            }
+            busy.push([Math.max(workStart, eventStart), Math.min(workEnd, eventEnd)]);
+        }
+        busy.sort((left, right) => left[0] - right[0]);
+        let cursor = workStart;
+        for (const [busyStart, busyEnd] of busy) {
+            if (busyStart > cursor && busyStart - cursor >= durationMinutes * 60000) {
+                windows.push({ date, start: calendarLocalTime(cursor), end: calendarLocalTime(busyStart) });
+            }
+            cursor = Math.max(cursor, busyEnd);
+        }
+        if (workEnd > cursor && workEnd - cursor >= durationMinutes * 60000) {
+            windows.push({ date, start: calendarLocalTime(cursor), end: '17:00' });
+        }
+    }
+    return windows;
+}
+
+async function readGoogleCalendarRange(request, requestImplementation = https.request) {
+    const parsed = parseCalendarReadRequest(request);
+    if (!parsed) return { ok: false, reason: 'I could not identify a calendar date or date range to read.' };
+    if (parsed.error) return { ok: false, reason: parsed.error };
+    let authentication;
+    try { authentication = await getGoogleCalendarAccessToken(requestImplementation); }
+    catch (error) { return { ok: false, reason: 'Google Calendar authentication failed: ' + error.message }; }
+    if (!authentication.accessToken) return { ok: false, reason: authentication.error || 'Google Calendar is not configured or authenticated.' };
+    const timeMaxDate = addCalendarDays(parsed.endDate, 1);
+    const events = [];
+    let pageToken = null;
+    try {
+        do {
+            const parameters = new URLSearchParams({
+                singleEvents: 'true',
+                orderBy: 'startTime',
+                maxResults: '2500',
+                timeMin: parsed.startDate + 'T00:00:00+03:00',
+                timeMax: timeMaxDate + 'T00:00:00+03:00',
+                timeZone: 'Africa/Nairobi'
+            });
+            if (pageToken) parameters.set('pageToken', pageToken);
+            const response = await requestJson({
+                hostname: 'www.googleapis.com',
+                path: '/calendar/v3/calendars/primary/events?' + parameters.toString(),
+                method: 'GET',
+                headers: { Authorization: 'Bearer ' + authentication.accessToken }
+            }, null, requestImplementation);
+            events.push(...(response.items || []));
+            pageToken = response.nextPageToken || null;
+        } while (pageToken);
+    } catch (error) {
+        return { ok: false, reason: 'Google Calendar read failed: ' + error.message };
+    }
+    const eventLines = events.length ? events.map(formatCalendarEvent).join('\n') : 'No events were returned for this date range.';
+    const durationMinutes = parsed.durationMinutes || 30;
+    const windows = parsed.availabilityRequested
+        ? calculateAvailableCalendarWindows(events, parsed.startDate, parsed.endDate, durationMinutes)
+        : [];
+    const availability = parsed.availabilityRequested
+        ? '\n\nAvailable windows (weekdays 09:00-17:00 Africa/Nairobi; ' + durationMinutes + '-minute minimum):\n'
+            + (windows.length ? windows.map((window) => '- ' + window.date + ' ' + window.start + '-' + window.end).join('\n') : 'No qualifying free windows found.')
+            + '\nAssumption: sensible working-day availability means Monday-Friday, 09:00-17:00 Africa/Nairobi.'
+        : '';
+    return {
+        ok: true,
+        parsed,
+        events,
+        windows,
+        reply: 'Google Calendar events from ' + parsed.startDate + ' through ' + parsed.endDate + ' (Africa/Nairobi):\n'
+            + eventLines + availability
+    };
+}
 function requestJson(options, body = null, requestImplementation = https.request) {
     return new Promise((resolve, reject) => {
         const request = requestImplementation(options, (response) => {
@@ -1034,44 +1375,71 @@ function addMinutesToCalendarTime(date, time, durationMinutes) {
     return `${end.toISOString().slice(0, 19)}`;
 }
 
-async function createGoogleCalendarEvent(request, requestImplementation = https.request) {
-    const parsed = parseCalendarCreateRequest(request);
+async function createGoogleCalendarEvent(request, requestImplementation = https.request, requestText = request) {
+    const parsed = request && typeof request === 'object' ? request : parseCalendarCreateRequest(request);
     if (!parsed) return { ok: false, deterministic: true, reason: 'I could not identify a calendar event request.' };
     if (parsed.error) return { ok: false, deterministic: true, reason: parsed.error };
-    let accessToken;
+    if (!parsed.title || !parsed.date || !parsed.startTime || !Number.isInteger(parsed.durationMinutes) || parsed.durationMinutes <= 0) {
+        return { ok: false, deterministic: true, reason: 'The calendar event requires a title, date, start time, and positive duration.' };
+    }
     let authentication;
     try { authentication = await getGoogleCalendarAccessToken(requestImplementation); }
-    catch (error) { return { ok: false, configured: true, reason: `Google Calendar authentication failed: ${error.message}` }; }
-    accessToken = authentication.accessToken;
-    if (!accessToken) return { ok: false, configured: false, reason: authentication.error || 'Google Calendar is not configured or authenticated.' };
+    catch (error) { return { ok: false, configured: true, reason: 'Google Calendar authentication failed: ' + error.message, parsed }; }
+    const accessToken = authentication.accessToken;
+    if (!accessToken) return { ok: false, configured: false, reason: authentication.error || 'Google Calendar is not configured or authenticated.', parsed };
     const timezone = process.env.GOOGLE_CALENDAR_TIMEZONE || 'Africa/Nairobi';
     const event = {
         summary: parsed.title,
-        start: { dateTime: `${parsed.date}T${parsed.startTime}:00`, timeZone: timezone },
+        start: { dateTime: parsed.date + 'T' + parsed.startTime + ':00', timeZone: timezone },
         end: { dateTime: addMinutesToCalendarTime(parsed.date, parsed.startTime, parsed.durationMinutes), timeZone: timezone }
     };
     if (parsed.location) event.location = parsed.location;
     if (parsed.description) event.description = parsed.description;
+    const reminderRequest = calendarReminderOverrides(parsed, requestText);
+    if (reminderRequest.error) return { ok: false, deterministic: true, reason: reminderRequest.error, parsed };
+    if (reminderRequest.requested) event.reminders = { useDefault: false, overrides: reminderRequest.overrides };
     const body = JSON.stringify(event);
     try {
         const response = await requestJson({
             hostname: 'www.googleapis.com',
             path: '/calendar/v3/calendars/primary/events',
             method: 'POST',
-            headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+            headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
         }, body, requestImplementation);
-        if (!response.id) return { ok: false, configured: true, reason: 'Google Calendar returned no event ID; creation is unconfirmed.' };
-        return { ok: true, eventId: response.id, response, parsed };
+        if (!response.id) return { ok: false, configured: true, reason: 'Google Calendar returned no event ID; creation is unconfirmed.', parsed };
+        const remindersVerified = reminderRequest.requested && response.reminders?.useDefault === false
+            && reminderRequest.overrides.every((expected) => response.reminders.overrides?.some((actual) => actual.method === expected.method && actual.minutes === expected.minutes));
+        const actualEvent = {
+            title: response.summary || parsed.title,
+            startDateTime: response.start?.dateTime || null,
+            endDateTime: response.end?.dateTime || null
+        };
+        return { ok: true, eventId: response.id, response, parsed, actualEvent, remindersRequested: reminderRequest.requested, remindersVerified };
     } catch (error) {
-        return { ok: false, configured: true, reason: `Google Calendar event creation failed: ${error.message}` };
+        return { ok: false, configured: true, reason: 'Google Calendar event creation failed: ' + error.message, parsed };
     }
+}
+
+
+function isStateUpdateAdviceQuestion(request) {
+    const text = String(request || '').trim();
+    const mutation = text.match(/\b(?:change|set|update|replace)\b[\s\S]*?\b(?:primary objective|current state|project state)\b/i);
+    if (!mutation) return false;
+    const prefix = text.slice(0, mutation.index);
+    return /\b(?:should|shall|can|could|may|whether|recommend|advisable|better|wise|worth)\b/i.test(prefix);
 }
 
 function classifyRequestedAction(action) {
     const text = String(action || '').trim();
     const lower = text.toLowerCase();
-    if (/(come back|when you(?:'|â€™)re finished|in the background|later|async)/i.test(lower)) return 'BACKGROUND_TASK';
+    if (/(come back|when you(?:'|Ã¢â‚¬â„¢)re finished|in the background|later|async)/i.test(lower)) return 'BACKGROUND_TASK';
+    if (isStateUpdateAdviceQuestion(text)) return 'CLARIFICATION_REQUIRED';
+    if (/^(?:please\s+)?(?:update|change|set)\s+(?:the\s+)?current focus\b/i.test(text)) return 'CURRENT_FOCUS_UPDATE';
+    if (parseActionItemAddRequest(text)) return 'ACTION_ITEM_ADD';
+    if (parseActionItemCompleteRequest(text)) return 'ACTION_ITEM_COMPLETE';
     if (parseCalendarCreateRequest(text)) return 'CALENDAR_CREATE';
+    if (parseCalendarReadRequest(text)) return 'CALENDAR_READ';
+    if (/\b(?:change|set|update|replace)\s+(?:my\s+)?primary objective\s+to\b/i.test(text)) return 'PRIMARY_OBJECTIVE_UPDATE';
     if (/(update|change|set|replace|mark)\b[\s\S]*(current state|project state)\b/i.test(lower) && /(project|for)\b/i.test(lower)) return 'PROJECT_STATE_UPDATE';
     if (/(edit|remove|delete|add|update|change|mark)\b[\s\S]*(dashboard|vault|note|file|master dashboard)/i.test(lower)) return 'VAULT_EDIT';
     if (/(implement|change the code|fix the code|add a feature|modify the runtime|write code)/i.test(lower)) return 'CODE_CHANGE';
@@ -1079,7 +1447,7 @@ function classifyRequestedAction(action) {
     if (/(read|show|reproduce|retrieve|display|quote)/i.test(lower) && /(validation_framework\.md|validation framework|local file|local section|section titled|section called|open unknowns?)/i.test(lower)) return 'LOCAL_READ';
     if (/(read|show|reproduce|retrieve|display|quote)/i.test(lower) && (/(validation_framework\.md|validation framework|local file|local section|section titled|section called|open unknowns?)/i.test(lower) || /\b[a-z0-9_ -]+\.md\b/i.test(lower))) return 'LOCAL_READ';
     if (/(research|investigate|look up|find out|competitor|competitors|web search)/i.test(lower)) return 'EXTERNAL_RESEARCH';
-    if (/\b(adjust|modify|change|fix|alter)\b/i.test(lower)) return 'CLARIFICATION_REQUIRED';
+    if (/\b(adjust|modify|change|fix|alter)\b/i.test(lower) && !/\b(?:do\s+not|don't|dont)\s+(?:adjust|modify|change|fix|alter)\b/i.test(lower)) return 'CLARIFICATION_REQUIRED';
     return 'ANSWER_NOW';
 }
 
@@ -1115,7 +1483,7 @@ function retrieveAIContextSection(transcript) {
     try {
         const content = fs.readFileSync(filePath, 'utf8');
         if (!headingMatch) return { targetTrack: 'AI Context', operationalMode: 'Deterministic Local Read', reply: content.trim() };
-        const heading = headingMatch[1].trim().replace(/^['\"�]|['\"�]$/g, '');
+        const heading = headingMatch[1].trim().replace(/^['\"”]|['\"”]$/g, '');
         const lines = content.split(/\r?\n/);
         const start = lines.findIndex((line) => { const match = line.match(/^(#{1,6})\s+(.+?)\s*$/); return match && match[2].trim().toLowerCase() === heading.toLowerCase(); });
         if (start < 0) return null;
@@ -1128,7 +1496,7 @@ function retrieveAIContextSection(transcript) {
 
 function retrieveLocalValidationSection(transcript) {
     const text = String(transcript || '').trim();
-    const headingMatch = text.match(/section\s+(?:titled|called)\s+["��]?(.+?)["��]?\s+(?:from|in)\s+/i) || text.match(/(?:read|show|display|retrieve)\s+(?:the\s+)?(.+?)\s+section\s+(?:from|in)\s+/i) || text.match(/(?:read|show|display|retrieve)\s+(?:the\s+)?(open\s+and\s+non-section)\s+(?:from|in)\s+/i);
+    const headingMatch = text.match(/section\s+(?:titled|called)\s+["“”]?(.+?)["“”]?\s+(?:from|in)\s+/i) || text.match(/(?:read|show|display|retrieve)\s+(?:the\s+)?(.+?)\s+section\s+(?:from|in)\s+/i) || text.match(/(?:read|show|display|retrieve)\s+(?:the\s+)?(open\s+and\s+non-section)\s+(?:from|in)\s+/i);
     const heading = headingMatch?.[1]?.trim();
     const normalizedHeading = heading?.toLowerCase().replace(/^open unknown$/, 'open unknowns').replace(/^open and non-section$/, 'open unknowns');
     if (!heading || !fs.existsSync(AUTHORITATIVE_RECORDS.perfumeVendingValidationFramework)) return null;
@@ -1284,14 +1652,15 @@ function pendingHandoffsResponse(transcript) {
 
 
 function buildCapabilityPreflight(transcript) {
-    const actions = isAuthoritativeInterviewAnalysisRequest(transcript)
-        ? [{ action: String(transcript || '').trim(), capability: 'ANSWER_NOW' }]
-        : classifyRequestedActions(transcript);
+    const actions = classifyRequestedActions(transcript);
+    if (isAuthoritativeInterviewAnalysisRequest(transcript) && !actions.some(({ capability }) => capability === 'ANSWER_NOW')) {
+        actions.unshift({ action: String(transcript || '').trim(), capability: 'ANSWER_NOW' });
+    }
     const clarifications = actions
         .filter(({ capability }) => capability === 'CLARIFICATION_REQUIRED')
         .map(({ action }) => action);
     const unsupported = actions.filter(({ capability }) =>
-        capability !== 'ANSWER_NOW' && capability !== 'CLARIFICATION_REQUIRED' && capability !== 'LOCAL_READ' && capability !== 'PROJECT_STATE_UPDATE'
+        capability !== 'ANSWER_NOW' && capability !== 'CLARIFICATION_REQUIRED' && capability !== 'LOCAL_READ' && capability !== 'PROJECT_STATE_UPDATE' && capability !== 'PRIMARY_OBJECTIVE_UPDATE' && capability !== 'CURRENT_FOCUS_UPDATE' && capability !== 'ACTION_ITEM_ADD' && capability !== 'ACTION_ITEM_COMPLETE' && capability !== 'CALENDAR_READ'
     );
     const answerNow = actions
         .filter(({ capability }) => capability === 'ANSWER_NOW')
@@ -1318,7 +1687,8 @@ function recordStructuredMemory(transcript, response) {
         });
     }
 
-    const isIdeaLike = /(idea|hypothesis|maybe|could|should|pilot|launch|project|concept|opportunity)/i.test(lower);
+    const isProjectStateOperation = Boolean(response?.projectStateUpdate);
+    const isIdeaLike = !isProjectStateOperation && /(idea|hypothesis|maybe|could|should|pilot|launch|project|concept|opportunity)/i.test(lower);
     const hasEvidenceLanguage = /(evidence|proof|tested|verified|validated|pilot|result|data|customer signal|feedback|trial)/i.test(lower);
     if (isIdeaLike) {
         const hypothesisText = promptText || replyText || 'Unspecified hypothesis';
@@ -1391,10 +1761,27 @@ function classifyResponseMode(transcript) {
 
 function buildResponseContext(mode, transcript) {
     const topicMaterial = retrieveRelevantVaultMaterial(transcript);
+    const sourceContract = [
+        '## Runtime source-of-truth and context precedence',
+        'Current Focus is authoritative in 00_Command_Center/Now.md; Primary Objective is authoritative in 00_Command_Center/Life_Dashboard.md; open/completed action items are authoritative in 00_Command_Center/Master_Dashboard.md; supported project current state is authoritative in that project\u2019s _Project_Context.md.',
+        'Master_Dashboard.md is authoritative for action items and command-center navigation only; it does not override a project\u2019s _Project_Context.md for project state.',
+        'Topic-specific retrieved Markdown, structured memory, and conversation/history are supporting material. They may be stale or incomplete and must not override the authoritative state sources above. If they conflict, use the authoritative state and identify the conflict rather than merging the claims.',
+        'A fresh actual Google Calendar API read is authoritative for live calendar availability; Calendar.md and historical claims are supporting context and cannot override that read.'
+    ];
+    const projectStatePath = path.join(VAULT_PATH, '03_Active_Engine', 'Perfume Vending Validation', '_Project_Context.md');
+    const includeProjectState = mode === 'PROJECT_STATUS' || /perfume vending|validation project|project state/i.test(String(transcript || ''));
+    const authoritativeProjectState = includeProjectState
+        ? ['## Perfume Vending Validation current state (authoritative _Project_Context.md)', readFileTail(projectStatePath, 3000)]
+        : [];
+    const assemble = (...sections) => [...sourceContract, ...authoritativeProjectState, ...sections].join('\n\n');
 
     switch (mode) {
         case 'DAILY_BRIEFING':
-            return [
+            return assemble(
+                '## Current focus (authoritative)',
+                readFileTail(path.join(VAULT_PATH, '00_Command_Center', 'Now.md'), 1800),
+                '## Primary Objective (authoritative)',
+                readFileTail(path.join(VAULT_PATH, '00_Command_Center', 'Life_Dashboard.md'), 2200),
                 '## Calendar',
                 readFileTail(CALENDAR_PATH, 4000),
                 '## Health log (recent)',
@@ -1403,64 +1790,58 @@ function buildResponseContext(mode, transcript) {
                 readFileTail(MASTER_DASHBOARD_PATH, 4000),
                 '## Structured memory (facts, hypotheses, lessons, experiences, project validations)',
                 summarizeMemoryStore(),
-                '## Topic-specific persisted material',
-                topicMaterial,
-                '## Recently modified vault notes',
-                recentVaultNotes()
-            ].join('\n\n');
+                '## Topic-specific retrieved material (supporting context; not authoritative state)',
+                topicMaterial
+            );
 
         case 'HEALTH_STATUS':
-            return [
+            return assemble(
                 '## Health log (recent)',
                 readFileTail(EXERCISE_PATH, 3000),
-                '## Relevant persisted health material',
+                '## Relevant retrieved health material (supporting context; not authoritative state)',
                 topicMaterial
-            ].join('\n\n');
+            );
 
         case 'PROJECT_STATUS':
-            return [
-                '## Current action-item dashboard (authoritative)',
+            return assemble(
+                '## Current action items from Master_Dashboard.md (authoritative for action items only)',
                 readFileTail(MASTER_DASHBOARD_PATH, 4000),
                 '## AI Ideas inbox (hypotheses only, not the active project list)',
                 readFileTail(AI_IDEAS_PATH, 4000),
                 '## Structured memory (facts, hypotheses, lessons, experiences, project validations)',
                 summarizeMemoryStore(),
-                '## Topic-specific persisted project material',
+                '## Topic-specific retrieved project material (supporting context; not authoritative state)',
                 topicMaterial
-            ].join('\n\n');
+            );
 
         case 'CONTENT':
-            return [
-                '## Current action-item dashboard (authoritative)',
+            return assemble(
+                '## Current action items from Master_Dashboard.md (authoritative for action items only)',
                 readFileTail(MASTER_DASHBOARD_PATH, 3000),
                 '## AI Ideas inbox (hypotheses only, not the active project list)',
                 readFileTail(AI_IDEAS_PATH, 4000),
                 '## Structured memory (facts, hypotheses, lessons, experiences, project validations)',
                 summarizeMemoryStore(),
-                '## Relevant persisted material',
+                '## Relevant retrieved material (supporting context; not authoritative state)',
                 topicMaterial
-            ].join('\n\n');
+            );
 
         case 'SYSTEM_STATUS':
-            return [
+            return assemble(
                 '## Structured memory (facts, hypotheses, lessons, experiences, project validations)',
                 summarizeMemoryStore(),
-                '## Relevant persisted system material',
+                '## Relevant retrieved system material (supporting context; not authoritative state)',
                 topicMaterial
-            ].join('\n\n');
+            );
 
         default:
-            return [
-                '## Topic-specific persisted material',
+            return assemble(
+                '## Topic-specific retrieved material (supporting context; not authoritative state)',
                 topicMaterial,
-                '## Current action-item dashboard (authoritative)',
+                '## Current action items from Master_Dashboard.md (authoritative for action items only)',
                 readFileTail(MASTER_DASHBOARD_PATH, 3000)
-            ].join('\n\n');
+            );
     }
-}
-
-function buildVaultContext(transcript) {
-    return ['## Calendar', readFileTail(CALENDAR_PATH, 4000), '## Health log (recent)', readFileTail(EXERCISE_PATH, 1800), '## Current action-item dashboard (authoritative)', readFileTail(MASTER_DASHBOARD_PATH, 4000), '## AI Ideas inbox (hypotheses only, not the active project list)', readFileTail(AI_IDEAS_PATH, 4000), '## Structured memory (facts, hypotheses, lessons, experiences, project validations)', summarizeMemoryStore(), '## Topic-specific persisted material', retrieveRelevantVaultMaterial(transcript), '## Recent Apogee interactions', readFileTail(MASTER_NOTE_PATH, 2500), '## Recently modified vault notes', recentVaultNotes()].join('\n\n');
 }
 
 function saveInteraction(prompt, response) {
@@ -1645,7 +2026,7 @@ function sanitizeForSpeech(text) {
     return String(text)
         .replace(/\*\*|__|\*|_|`|#+/g, ' ')
         .replace(/[\[\](){}`<>]/g, ' ')
-        .replace(/ðŸ“…|ðŸƒ|ðŸ—‚ï¸|ðŸŽ¯|âœ…|âš ï¸|ðŸš¨|ðŸ“Œ|ðŸ’¡|ðŸŒ¿|ðŸ”|ðŸ“ˆ/gu, ' ')
+        .replace(/Ã°Å¸â€œâ€¦|Ã°Å¸ÂÆ’|Ã°Å¸â€”â€šÃ¯Â¸Â|Ã°Å¸Å½Â¯|Ã¢Å“â€¦|Ã¢Å¡Â Ã¯Â¸Â|Ã°Å¸Å¡Â¨|Ã°Å¸â€œÅ’|Ã°Å¸â€™Â¡|Ã°Å¸Å’Â¿|Ã°Å¸â€Â|Ã°Å¸â€œË†/gu, ' ')
         .replace(/[-\u2010-\u2015\u2212]+/g, ' ')
         .replace(/([.!?:])\r?\n{2,}/g, ' ')
         .replace(/\r?\n{2,}/g, '. ')
@@ -1673,6 +2054,64 @@ function speakLocally(text) {
     speechProcess.stdin.end(spokenText, 'utf8');
 }
 async function runSystemPipeline(transcript) {
+    const pendingCalendarPlan = getPendingCalendarPlan();
+    const isCalendarPlanExecutionRequest = isAffirmativeCalendarPlanExecution(transcript);
+    const hasUsableCalendarPlan = pendingCalendarPlan && pendingCalendarPlan.events.length > 0
+        && pendingCalendarPlan.events.every((event) => /^\d{4}-\d{2}-\d{2}$/.test(event.date)
+            && /^\d{2}:\d{2}$/.test(event.startTime)
+            && Number.isFinite(event.durationMinutes) && event.durationMinutes > 0);
+    if (isCalendarPlanExecutionRequest && !hasUsableCalendarPlan) {
+        const result = {
+            query: transcript,
+            timestamp: new Date().toISOString(),
+            reply: 'I do not have a pending proposed calendar schedule to execute. Please ask me to propose the schedule again.',
+            targetTrack: 'Calendar',
+            operationalMode: 'No Pending Calendar Plan',
+            systemHealthScore: '100%'
+        };
+        currentDashboardData = result;
+        saveInteraction(transcript, result);
+        console.log('[Apogee Reply]: ' + result.reply);
+        speakLocally(result.reply);
+        promptUser();
+        return result;
+    }
+    if (hasUsableCalendarPlan && isCalendarPlanExecutionRequest) {
+        const store = readMemoryStore();
+        store.pending_calendar_plan = { ...pendingCalendarPlan, status: 'EXECUTING' };
+        fs.writeFileSync(MEMORY_PATH, JSON.stringify(store, null, 2), 'utf8');
+        const override = String(transcript || '').match(/\b(?:exactly\s+)?(\d+)\s*(?:minutes?|mins?)\b/i);
+        const remindersRequested = hasCalendarReminderRequest(transcript);
+        const events = pendingCalendarPlan.events.map((event) => ({
+            ...event,
+            durationMinutes: override ? Number(override[1]) : event.durationMinutes,
+            remindersRequested: Boolean(event.remindersRequested || remindersRequested)
+        }));
+        const attempts = await executeCalendarEventBatch(events, transcript);
+        clearPendingCalendarPlan();
+        const unavailable = attempts.some((item) => !item.result.ok && !item.result.configured);
+        let reply = calendarEventBatchReply(attempts);
+        if (unavailable) {
+            const handoffs = createHandoffsForRequest(transcript, { actions: [{ action: transcript, capability: 'CALENDAR_CREATE' }] });
+            reply += '\n\n' + buildTrackedHandoffResponse(handoffs);
+        }
+        const result = {
+            query: transcript,
+            timestamp: new Date().toISOString(),
+            reply,
+            targetTrack: 'Calendar',
+            operationalMode: 'Google Calendar Batch Create',
+            systemHealthScore: '100%',
+            calendarEvents: attempts.map((item) => ({ parsed: item.event, ok: item.result.ok, eventId: item.result.eventId || null, reason: item.result.reason || null, remindersVerified: Boolean(item.result.remindersVerified) }))
+        };
+        currentDashboardData = result;
+        saveInteraction(transcript, result);
+        console.log('[Apogee Reply]: "' + result.reply + '"');
+        speakLocally(result.reply);
+        promptUser();
+        return result;
+    }
+    if (pendingCalendarPlan) clearPendingCalendarPlan();
     const authoritativeQuestions = retrieveAuthoritativeInterviewQuestions(transcript);
     if (authoritativeQuestions) {
         const result = {
@@ -1771,6 +2210,44 @@ async function runSystemPipeline(transcript) {
         return result;
     }
     const capabilityPreflight = buildCapabilityPreflight(transcript);
+    const stateAdviceQuestion = capabilityPreflight.actions.find(({ action, capability }) =>
+        capability === 'CLARIFICATION_REQUIRED' && isStateUpdateAdviceQuestion(action)
+    );
+    if (stateAdviceQuestion) {
+        const result = {
+            query: transcript,
+            timestamp: new Date().toISOString(),
+            reply: 'I have not changed the Primary Objective or Project State. Your wording asks whether to make a change; please confirm if you want the update itself.',
+            targetTrack: 'Life / Project State',
+            operationalMode: 'State Update Clarification',
+            systemHealthScore: '100%'
+        };
+        currentDashboardData = result;
+        saveInteraction(transcript, result);
+        console.log(`[Apogee Reply]: "${result.reply}"`);
+        speakLocally(result.reply);
+        promptUser();
+        return result;
+    }
+    const calendarReadAction = capabilityPreflight.actions.find(({ capability }) => capability === 'CALENDAR_READ');
+    if (calendarReadAction && !capabilityPreflight.answerNowTranscript) {
+        const calendarRead = await readGoogleCalendarRange(calendarReadAction.action);
+        const result = {
+            query: transcript,
+            timestamp: new Date().toISOString(),
+            reply: calendarRead.ok ? calendarRead.reply : 'Google Calendar read failed: ' + calendarRead.reason,
+            targetTrack: 'Calendar',
+            operationalMode: calendarRead.ok ? 'Google Calendar Read' : 'Calendar Read Failure',
+            systemHealthScore: '100%',
+            calendarRead
+        };
+        currentDashboardData = result;
+        saveInteraction(transcript, result);
+        console.log('[Apogee Reply]: "' + result.reply + '"');
+        speakLocally(result.reply);
+        promptUser();
+        return result;
+    }
     const localReadAction = capabilityPreflight.actions.find(({ capability }) => capability === 'LOCAL_READ');
     if (localReadAction) {
         const localRead = retrieveAIContextSection(localReadAction.action) || retrieveLocalValidationSection(localReadAction.action);
@@ -1800,6 +2277,89 @@ async function runSystemPipeline(transcript) {
         }
     }
 
+    const currentFocusAction = capabilityPreflight.actions.find(({ capability }) => capability === 'CURRENT_FOCUS_UPDATE');
+    if (currentFocusAction) {
+        const parsedFocus = parseCurrentFocusUpdateRequest(currentFocusAction.action);
+        const focusUpdate = parsedFocus
+            ? updateCurrentFocus(parsedFocus.focus)
+            : { ok: false, reason: 'I could not identify a nonempty, single-line current focus.' };
+        const result = {
+            query: transcript,
+            timestamp: new Date().toISOString(),
+            reply: focusUpdate.ok && focusUpdate.verified
+                ? 'Current focus updated and verified.'
+                : `Current focus update failed: ${focusUpdate.reason}`,
+            targetTrack: 'Life / CEO State',
+            operationalMode: 'Deterministic Current Focus Update',
+            systemHealthScore: '100%',
+            currentFocusUpdate: focusUpdate
+        };
+        currentDashboardData = result;
+        saveInteraction(transcript, result);
+        console.log(`[Apogee Reply]: "${result.reply}"`);
+        speakLocally(result.reply);
+        promptUser();
+        return result;
+    }
+    const actionItemAction = capabilityPreflight.actions.find(({ capability }) => capability === 'ACTION_ITEM_ADD' || capability === 'ACTION_ITEM_COMPLETE');
+    if (actionItemAction) {
+        const parsedActionItem = actionItemAction.capability === 'ACTION_ITEM_ADD'
+            ? parseActionItemAddRequest(actionItemAction.action)
+            : parseActionItemCompleteRequest(actionItemAction.action);
+        const actionItemResult = parsedActionItem
+            ? actionItemAction.capability === 'ACTION_ITEM_ADD'
+                ? addActionItem(parsedActionItem.actionText)
+                : completeActionItem(parsedActionItem.matchText)
+            : { ok: false, reason: 'I could not identify the action item.' };
+        const reply = actionItemResult.ok
+            ? actionItemAction.capability === 'ACTION_ITEM_ADD'
+                ? actionItemResult.alreadyOpen ? 'That action item is already open.' : 'Action item added and verified.'
+                : actionItemResult.alreadyComplete ? 'That action item is already complete.' : 'Action item marked complete and verified.'
+            : actionItemResult.clarificationRequired
+                ? `More than one action item matches. ${actionItemResult.reason}`
+                : `Action item update failed: ${actionItemResult.reason}`;
+        const result = {
+            query: transcript,
+            timestamp: new Date().toISOString(),
+            reply,
+            targetTrack: 'Active Priorities',
+            operationalMode: 'Deterministic Action Item Update',
+            systemHealthScore: '100%',
+            actionItem: { capability: actionItemAction.capability, ...actionItemResult }
+        };
+        currentDashboardData = result;
+        recordStructuredMemory(transcript, result);
+        saveInteraction(transcript, result);
+        console.log(`[Apogee Reply]: "${result.reply}"`);
+        speakLocally(result.reply);
+        promptUser();
+        return result;
+    }
+    const primaryObjectiveAction = capabilityPreflight.actions.find(({ capability }) => capability === 'PRIMARY_OBJECTIVE_UPDATE');
+    if (primaryObjectiveAction) {
+        const parsedObjective = parsePrimaryObjectiveUpdateRequest(primaryObjectiveAction.action);
+        const objectiveUpdate = parsedObjective
+            ? updatePrimaryObjective(parsedObjective.newObjective)
+            : { ok: false, reason: 'I could not identify the new primary objective.' };
+        const result = {
+            query: transcript,
+            timestamp: new Date().toISOString(),
+            reply: objectiveUpdate.ok
+                ? 'Primary objective updated and verified.'
+                : `Primary objective update failed: ${objectiveUpdate.reason}`,
+            targetTrack: 'Life / CEO State',
+            operationalMode: 'Deterministic Primary Objective Update',
+            systemHealthScore: '100%',
+            primaryObjectiveUpdate: objectiveUpdate
+        };
+        currentDashboardData = result;
+        recordStructuredMemory(transcript, result);
+        saveInteraction(transcript, result);
+        console.log(`[Apogee Reply]: "${result.reply}"`);
+        speakLocally(result.reply);
+        promptUser();
+        return result;
+    }
     const projectStateUpdateAction = capabilityPreflight.actions.find(({ capability }) => capability === 'PROJECT_STATE_UPDATE');
     if (projectStateUpdateAction) {
         const parsedProjectState = parseProjectStateUpdateRequest(projectStateUpdateAction.action);
@@ -1838,62 +2398,28 @@ async function runSystemPipeline(transcript) {
         saveInteraction(transcript, result);
         return result;
     }
-    const calendarAction = capabilityPreflight.actions.find(({ capability }) => capability === 'CALENDAR_CREATE');
-    if (calendarAction) {
-        const calendarResult = await createGoogleCalendarEvent(calendarAction.action);
-        recordCalendarExecution(calendarAction.action, calendarResult);
-        if (calendarResult.deterministic) {
-            const result = {
-                query: transcript,
-                timestamp: new Date().toISOString(),
-                reply: `Google Calendar event was not created. ${calendarResult.reason}`,
-                targetTrack: 'Calendar',
-                operationalMode: 'Deterministic Calendar Validation',
-                systemHealthScore: '100%'
-            };
-            currentDashboardData = result;
-            recordStructuredMemory(transcript, result);
-            saveInteraction(transcript, result);
-            console.log(`[Apogee Reply]: "${result.reply}"`);
-            speakLocally(result.reply);
-            promptUser();
-            return result;
-        }
-        if (!calendarResult.ok && !calendarResult.configured) {
-            const handoffs = createHandoffsForRequest(transcript, {
-                actions: [calendarAction],
-                handoffs: [buildCapabilityHandoff('CALENDAR_CREATE', calendarAction.action)]
-            });
-            const result = {
-                query: transcript,
-                timestamp: new Date().toISOString(),
-                reply: buildTrackedHandoffResponse(handoffs),
-                targetTrack: 'Calendar Handoff',
-                operationalMode: 'Handoff Required',
-                systemHealthScore: '100%'
-            };
-            currentDashboardData = result;
-            recordStructuredMemory(transcript, result);
-            saveInteraction(transcript, result);
-            console.log(`[Apogee Reply]: "${result.reply}"`);
-            speakLocally(result.reply);
-            promptUser();
-            return result;
+    const calendarActions = capabilityPreflight.actions.filter(({ capability }) => capability === 'CALENDAR_CREATE');
+    if (calendarActions.length) {
+        const attempts = await executeCalendarEventBatch(calendarActions.map(({ action }) => action), transcript);
+        const unavailable = attempts.some((item) => !item.result.ok && !item.result.configured);
+        let reply = calendarEventBatchReply(attempts);
+        if (unavailable) {
+            const handoffs = createHandoffsForRequest(transcript, { actions: calendarActions });
+            reply += '\n\n' + buildTrackedHandoffResponse(handoffs);
         }
         const result = {
             query: transcript,
             timestamp: new Date().toISOString(),
-            reply: calendarResult.ok
-                ? `Google Calendar event created successfully. Event ID: ${calendarResult.eventId}. The Google Calendar API returned a successful response.`
-                : `Google Calendar event was not created. ${calendarResult.reason}`,
+            reply,
             targetTrack: 'Calendar',
-            operationalMode: calendarResult.ok ? 'Google Calendar API' : 'Calendar Failure',
-            systemHealthScore: '100%'
+            operationalMode: 'Google Calendar Batch Create',
+            systemHealthScore: '100%',
+            calendarEvents: attempts.map((item) => ({ parsed: item.event, ok: item.result.ok, eventId: item.result.eventId || null, reason: item.result.reason || null, remindersVerified: Boolean(item.result.remindersVerified) }))
         };
         currentDashboardData = result;
         recordStructuredMemory(transcript, result);
         saveInteraction(transcript, result);
-        console.log(`[Apogee Reply]: "${result.reply}"`);
+        console.log('[Apogee Reply]: "' + result.reply + '"');
         speakLocally(result.reply);
         promptUser();
         return result;
@@ -1934,6 +2460,14 @@ async function runSystemPipeline(transcript) {
     if (authoritativeEvidence && interviewAnalysisRequest) {
         vaultContext += `\n\n## Authoritative Customer Interview Evidence\n${authoritativeEvidence.reply}`;
     }
+    const answerCalendarReadAction = capabilityPreflight.actions.find(({ capability }) => capability === 'CALENDAR_READ');
+    let answerCalendarRead = null;
+    if (answerCalendarReadAction) {
+        answerCalendarRead = await readGoogleCalendarRange(answerCalendarReadAction.action);
+        vaultContext += answerCalendarRead.ok
+            ? "\n\n## Actual Google Calendar Read\n" + answerCalendarRead.reply
+            : "\n\n## Google Calendar Read Failure\n" + answerCalendarRead.reason;
+    }
     let result;
     const calculatorResponse = deterministicCalculatorResponse(answerTranscript);
     const isCalendarReadRequest = /(?:today|tomorrow)/i.test(answerTranscript) && /(?:calendar|schedule|agenda)/i.test(answerTranscript);
@@ -1946,7 +2480,8 @@ async function runSystemPipeline(transcript) {
         providerCallCounts.claude++;
         const completion = await anthropic.messages.create({
             model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5',
-            max_tokens: 1600,
+            max_tokens: 4000,
+            output_config: { effort: 'low' },
             system: DAILY_BRIEFING_RULES,
             messages: [{ role: 'user', content: `Vault Context:\n${vaultContext}\n\n${exerciseActionLog}\n\nInput: "${answerTranscript}"` }]
         });
@@ -1986,7 +2521,9 @@ async function runSystemPipeline(transcript) {
         result.reply = sections.join('\n\n');
     }
     result.query = transcript;
-    currentDashboardData = result;
+    if (!capabilityPreflight.handoffs.length && !capabilityPreflight.clarifications.length && !/fallback|failed/i.test(String(result.operationalMode || ''))) {
+        maybePersistProposedCalendarPlan(answerTranscript, result.reply);
+    }
     recordStructuredMemory(transcript, result);
     saveInteraction(transcript, result);
     console.log(`[Apogee Reply]: "${result.reply}"`);
@@ -2030,16 +2567,177 @@ if (SHOULD_START) {
     promptUser();
 }
 
+function parseCurrentFocusUpdateRequest(request) {
+    const match = String(request || '').trim().match(/^(?:please\s+)?(?:update|change|set)\s+(?:the\s+)?current focus\s+to\s+(.+?)\s*[.!]?\s*$/i);
+    const focus = match?.[1]?.trim().replace(/[.!?]+$/, '').trim();
+    if (!focus || /[\r\n]/.test(focus)) return null;
+    return { focus };
+}
+function updateCurrentFocus(focus) {
+    const requestedFocus = String(focus || '').trim();
+    if (!requestedFocus) return { ok: false, reason: 'The new current focus is required.' };
+    if (/[\r\n]/.test(requestedFocus)) return { ok: false, reason: 'Current focus must be a single line.' };
+    const nowPath = path.join(VAULT_PATH, '00_Command_Center', 'Now.md');
+    if (!fs.existsSync(nowPath)) return { ok: false, reason: 'The authoritative Now document does not exist.' };
+    const content = fs.readFileSync(nowPath, 'utf8');
+    const lines = content.split(/\r?\n/);
+    const headings = ['## Current focus', '## Next actions', '## Working notes'];
+    const positions = headings.map((heading) => lines.reduce((found, line, index) => {
+        if (line.trim() === heading) found.push(index);
+        return found;
+    }, []));
+    if (positions.some((found) => found.length !== 1) || !(positions[0][0] < positions[1][0] && positions[1][0] < positions[2][0])) {
+        return { ok: false, reason: 'Now.md does not contain the expected Current focus, Next actions, and Working notes structure.' };
+    }
+    const currentFocusPattern = /(^## Current focus[ \t]*\r?\n)([\s\S]*?)(?=^## Next actions[ \t]*$)/m;
+    if (!currentFocusPattern.test(content)) return { ok: false, reason: 'Now.md does not contain a valid Current focus section.' };
+    const newline = content.includes('\r\n') ? '\r\n' : '\n';
+    const updatedContent = content.replace(currentFocusPattern, (match, heading) => `${heading}- ${requestedFocus}${newline}${newline}`);
+    fs.writeFileSync(nowPath, updatedContent, 'utf8');
+    const verifiedContent = fs.readFileSync(nowPath, 'utf8');
+    const verifiedLines = verifiedContent.split(/\r?\n/);
+    const start = verifiedLines.indexOf('## Current focus');
+    const end = verifiedLines.indexOf('## Next actions');
+    const verified = start >= 0 && end > start && verifiedLines.slice(start + 1, end).filter((line) => line.trim()).join('\n') === `- ${requestedFocus}`;
+    if (!verified) return { ok: false, reason: 'Current focus write could not be verified.' };
+    return { ok: true, focus: requestedFocus, verified: true };
+}
+function parseActionItemAddRequest(request) {
+    const match = String(request || '').trim().match(/^(?:please\s+)?add\s+(.+?)\s+to\s+(?:my\s+)?active priorities[.!]?\s*$/i);
+    const actionText = match?.[1]?.trim().replace(/[.!?]+$/, '').trim();
+    if (!actionText || /[\r\n]/.test(actionText)) return null;
+    return { actionText };
+}
+function parseActionItemCompleteRequest(request) {
+    const match = String(request || '').trim().match(/^(?:please\s+)?mark\s+(.+?)\s+as\s+(?:complete|completed|done)[.!]?\s*$/i);
+    const matchText = match?.[1]?.trim().replace(/\s+action$/i, '').replace(/^the\s+/i, '').trim();
+    if (!matchText || /[\r\n]/.test(matchText)) return null;
+    return { matchText };
+}
+function normalizeActionItemText(text) {
+    return String(text || '').replace(/<!--[\s\S]*?-->/g, '').replace(/\s+#action\b.*$/i, '')
+        .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+function readDashboardActionItems(content) {
+    return String(content).split(/\r?\n/).flatMap((line, lineIndex) => {
+        const checkbox = line.match(/^\s*-\s+\[([ xX])\]\s+(.+)$/);
+        if (!checkbox || !/#action\b/i.test(line)) return [];
+        const actionText = line.replace(/^\s*-\s+\[[ xX]\]\s+/, '').replace(/<!--[\s\S]*?-->/g, '').replace(/\s+#action\b.*$/i, '').trim();
+        return actionText ? [{ line, lineIndex, open: checkbox[1] === ' ', actionText, normalized: normalizeActionItemText(actionText) }] : [];
+    });
+}
+function getMasterDashboardPath() {
+    return path.join(VAULT_PATH, '00_Command_Center', 'Master_Dashboard.md');
+}
+function addActionItem(actionText) {
+    const action = String(actionText || '').trim();
+    if (!action || /[\r\n]/.test(action)) return { ok: false, reason: 'The action text must be a nonempty single line.' };
+    const dashboardPath = getMasterDashboardPath();
+    if (!fs.existsSync(dashboardPath)) return { ok: false, reason: 'The authoritative action dashboard does not exist.' };
+    const content = fs.readFileSync(dashboardPath, 'utf8');
+    const items = readDashboardActionItems(content);
+    const normalized = normalizeActionItemText(action);
+    if (items.some((item) => item.open && item.normalized === normalized)) {
+        return { ok: true, actionText: action, alreadyOpen: true, verified: true };
+    }
+    const section = content.match(/^## [^\r\n]*Active Focus[^\r\n]*Action Items[^\r\n]*(?:\r?\n|$)/im);
+    if (!section) return { ok: false, reason: 'The Active Focus & Action Items section does not exist.' };
+    const newline = content.includes('\r\n') ? '\r\n' : '\n';
+    const line = `- [ ] ${action} #action${newline}`;
+    const updated = content.replace(section[0], section[0] + line);
+    fs.writeFileSync(dashboardPath, updated, 'utf8');
+    const verifiedContent = fs.readFileSync(dashboardPath, 'utf8');
+    const verifiedItems = readDashboardActionItems(verifiedContent);
+    const verified = verifiedItems.filter((item) => item.open && item.normalized === normalized).length === 1;
+    if (!verified) return { ok: false, reason: 'Action item write could not be verified.' };
+    return { ok: true, actionText: action, added: true, verified: true };
+}
+function completeActionItem(matchText) {
+    const query = String(matchText || '').trim().replace(/^the\s+/i, '');
+    const normalizedQuery = normalizeActionItemText(query);
+    if (!normalizedQuery || normalizedQuery.split(' ').length < 2) {
+        return { ok: false, clarificationRequired: true, reason: 'Please provide at least two identifying words.' };
+    }
+    const dashboardPath = getMasterDashboardPath();
+    if (!fs.existsSync(dashboardPath)) return { ok: false, reason: 'The authoritative action dashboard does not exist.' };
+    const content = fs.readFileSync(dashboardPath, 'utf8');
+    const items = readDashboardActionItems(content);
+    const matches = items.filter((item) => item.normalized.includes(normalizedQuery));
+    const openMatches = matches.filter((item) => item.open);
+    if (openMatches.length > 1) {
+        return { ok: false, clarificationRequired: true, reason: 'Please identify which matching open action you mean.' };
+    }
+    if (openMatches.length === 0) {
+        const completedMatches = matches.filter((item) => !item.open);
+        if (completedMatches.length === 1) {
+            return { ok: true, alreadyComplete: true, actionText: completedMatches[0].actionText, verified: true };
+        }
+        if (completedMatches.length > 1) {
+            return { ok: false, clarificationRequired: true, reason: 'Several completed actions match that description.' };
+        }
+        return { ok: false, reason: 'No matching open action was found.' };
+    }
+    const selected = openMatches[0];
+    const updatedLine = selected.line.replace(/^(\s*-\s+)\[ \]/, '$1[x]');
+    const lines = content.split(/\r?\n/);
+    lines[selected.lineIndex] = updatedLine;
+    fs.writeFileSync(dashboardPath, lines.join(content.includes('\r\n') ? '\r\n' : '\n'), 'utf8');
+    const verifiedItems = readDashboardActionItems(fs.readFileSync(dashboardPath, 'utf8'));
+    const verified = verifiedItems.filter((item) => !item.open && item.normalized === selected.normalized).length === 1;
+    if (!verified) return { ok: false, reason: 'Action completion write could not be verified.' };
+    return { ok: true, completed: true, actionText: selected.actionText, verified: true };
+}
+function parsePrimaryObjectiveUpdateRequest(request) {
+    const text = String(request || '').trim();
+    if (isStateUpdateAdviceQuestion(text)) return null;
+    const match = text.match(/\b(?:change|set|update|replace)\s+(?:my\s+)?primary objective\s+to\s+(.+?)\s*$/i);
+    const newObjective = match?.[1]?.trim().replace(/[.!?]+$/, '').trim();
+    if (!newObjective || /[\r\n]/.test(newObjective)) return null;
+    return { newObjective };
+}
+function updatePrimaryObjective(newObjective) {
+    const objective = String(newObjective || '').trim();
+    if (!objective) return { ok: false, reason: 'The new primary objective is required.' };
+    if (/[\r\n]/.test(objective)) return { ok: false, reason: 'The primary objective must be a single line.' };
+    const dashboardPath = path.join(VAULT_PATH, '00_Command_Center', 'Life_Dashboard.md');
+    if (!fs.existsSync(dashboardPath)) return { ok: false, reason: 'The authoritative Life dashboard does not exist.' };
+    const content = fs.readFileSync(dashboardPath, 'utf8');
+    const objectiveLine = /^(-\s*)?\*\*Primary Objective:\*\*.*$/gm;
+    const matches = [...content.matchAll(objectiveLine)];
+    if (matches.length !== 1) return { ok: false, reason: 'The authoritative dashboard must contain exactly one Primary Objective field.' };
+    const updatedContent = content.replace(objectiveLine, `- **Primary Objective:** ${objective}`);
+    fs.writeFileSync(dashboardPath, updatedContent, 'utf8');
+    const verifiedContent = fs.readFileSync(dashboardPath, 'utf8');
+    const verifiedMatches = [...verifiedContent.matchAll(objectiveLine)];
+    if (verifiedMatches.length !== 1 || verifiedMatches[0][0] !== `- **Primary Objective:** ${objective}`) {
+        return { ok: false, reason: 'Primary objective write could not be verified.' };
+    }
+    return { ok: true, newObjective: objective, verified: true };
+}
 function parseProjectStateUpdateRequest(request) {
     const text = String(request || '').trim();
-    const match = text.match(/update\s+the\s+current\s+state\s+for\s+(.+?)\s+to\s+(.+)\s*$/i);
-    if (!match) return null;
+    if (isStateUpdateAdviceQuestion(text)) return null;
 
-    const projectName = match[1].trim();
-    const newState = match[2].trim();
-    if (!projectName || !newState) return null;
+    let match = text.match(/update\s+the\s+current\s+state\s+for\s+(.+?)\s+to\s+(.+)\s*$/i);
+    if (match) {
+        const projectName = match[1].trim();
+        const newState = match[2].trim();
+        if (!projectName || !newState) return null;
+        return { projectName, newState };
+    }
 
-    return { projectName, newState };
+    match = text.match(/update\s+the\s+(.+?)\s+project\s+state\s+to\s+(.+)\s*$/i);
+    if (match) {
+        const projectLabel = match[1].trim().toLowerCase();
+        const projectName = projectLabel === 'perfume vending validation'
+            ? 'Perfume Vending Machine'
+            : match[1].trim();
+        const newState = match[2].trim();
+        if (!projectName || !newState) return null;
+        return { projectName, newState };
+    }
+
+    return null;
 }
 function updateProjectCurrentState(projectName, newState) {
     const normalizedProject = String(projectName || '').trim().toLowerCase();
@@ -2103,6 +2801,14 @@ function updateProjectCurrentState(projectName, newState) {
 module.exports = {
     splitAtomicActions,
     parseCalendarCreateRequest,
+    parseCalendarProposalSlot,
+    maybePersistProposedCalendarPlan,
+    getPendingCalendarPlan,
+    isAffirmativeCalendarPlanExecution,
+    clearPendingCalendarPlan,
+    parseCalendarReadRequest,
+    readGoogleCalendarRange,
+    calculateAvailableCalendarWindows,
     validateGoogleCalendarConfiguration,
     classifyRequestedActions,
     buildCapabilityHandoff,
@@ -2122,6 +2828,7 @@ module.exports = {
     retrieveAuthoritativeEvidenceLedger,
     retrieveAuthoritativeInterviewEvidence,
     retrieveRelevantVaultMaterial,
+    buildResponseContext,
     recordStructuredMemory,
     readMemoryStore,
     normalizeResult,
@@ -2133,8 +2840,20 @@ module.exports = {
     parseExerciseCorrectionRequest,
     applyExerciseCorrection,
     updateProjectCurrentState,
+    parseCurrentFocusUpdateRequest,
+    updateCurrentFocus,
+    parseActionItemAddRequest,
+    parseActionItemCompleteRequest,
+    addActionItem,
+    completeActionItem,
+    parsePrimaryObjectiveUpdateRequest,
+    updatePrimaryObjective,
     providerCallCounts
 };
+
+
+
+
 
 
 

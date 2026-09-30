@@ -44,6 +44,9 @@ const mixedPreflight = buildCapabilityPreflight('Remove the market-research inte
 assert.strictEqual(mixedPreflight.answerNowTranscript, 'is M-Pesa reconciliation actually a viable problem to solve?');
 assert.match(mixedPreflight.handoffs[0], /Builder-agent handoff/);
 
+const readOnlyPrompt = 'What is the next validation activity for the perfume vending validation project? Answer in key sentences using the existing project state only. Do not modify files.';
+assert.deepStrictEqual(classifyRequestedActions(readOnlyPrompt).map(({ capability }) => capability), ['ANSWER_NOW']);
+
 const deferred = buildCapabilityPreflight('Research this and come back when you are finished.');
 assert.deepStrictEqual(deferred.actions.map(({ capability }) => capability), ['EXTERNAL_RESEARCH', 'BACKGROUND_TASK']);
 assert.match(deferred.handoffs.join('\n'), /External-research handoff/);

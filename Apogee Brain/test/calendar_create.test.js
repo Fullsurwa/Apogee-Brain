@@ -1,4 +1,4 @@
-const assert = require('assert');
+﻿const assert = require('assert');
 const { EventEmitter } = require('events');
 const fs = require('fs');
 const os = require('os');
@@ -61,11 +61,39 @@ assert.deepStrictEqual(
     classifyRequestedActions('Schedule Family Meeting Sunday, 6 September 2026 at 3:00 PM').map(({ capability }) => capability),
     ['CALENDAR_CREATE']
 );
+const activePriorityRequest = 'Add testing Google Calendar integration to my active priorities';
+assert.notStrictEqual(
+    classifyRequestedActions(activePriorityRequest).map(({ capability }) => capability)[0],
+    'CALENDAR_CREATE'
+);
+const knownGoodCalendarRequest = 'Schedule Apogee review for September 26 2026 at 2 PM for 30 minutes';
+assert.deepStrictEqual(
+    classifyRequestedActions(knownGoodCalendarRequest).map(({ capability }) => capability),
+    ['CALENDAR_CREATE']
+);
+assert.deepStrictEqual(parseCalendarCreateRequest(knownGoodCalendarRequest), {
+    title: 'Apogee review',
+    date: '2026-09-26',
+    startTime: '14:00',
+    durationMinutes: 30,
+    location: null,
+    description: null
+});
 const parsed = parseCalendarCreateRequest('Schedule Family Meeting Sunday, 6 September 2026 at 3:00 PM');
 assert.deepStrictEqual(parsed, {
     title: 'Family Meeting',
     date: '2026-09-06',
     startTime: '15:00',
+    durationMinutes: 60,
+    location: null,
+    description: null
+});
+
+const parsedMonthFirstDottedMeridiem = parseCalendarCreateRequest('Schedule Apogee Review for September 26, 2026 at 2 p.m.');
+assert.deepStrictEqual(parsedMonthFirstDottedMeridiem, {
+    title: 'Apogee Review',
+    date: '2026-09-26',
+    startTime: '14:00',
     durationMinutes: 60,
     location: null,
     description: null
@@ -119,3 +147,4 @@ assert.deepStrictEqual(parsedWithDuration, {
     console.error(error);
     process.exitCode = 1;
 });
+

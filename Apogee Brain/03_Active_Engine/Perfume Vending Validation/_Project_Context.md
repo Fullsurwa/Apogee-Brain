@@ -5,11 +5,7 @@
 - Last updated: 2026-09-04
 
 ## Current state
-- Working hypothesis: A wall-mounted self-service fragrance vending machine could allow customers to pay for a small number of perfume sprays in high-traffic or grooming/social environments, potentially creating a viable business in Kenya.
-- Central question: Is there real unmet demand for convenient, affordable, trusted perfume-by-the-spray in Kenya, and can a suitable venue/business model make the economics work?
-- Current hardware reference: P6-style wall-mounted smart touchscreen fragrance vending machine, apparently with approximately five fragrance slots, touchscreen interface, payment hardware, and individual spray dispensing.
-- Hardware identity: Exact manufacturer/OEM and model are UNKNOWN. "P6-style" is a description, not a confirmed manufacturer/model identity.
-- Phase boundary: RESEARCH / VALIDATION only. No hardware purchase or recommendation, GO decision, project-ready designation, or validation claim has been made.
+- customer and venue discovery is the next validation phase.
 
 ## Next actions
 - [ ] Run CUSTOMER + VENUE DISCOVERY using the interview and venue research trackers in [[Validation_Framework]].

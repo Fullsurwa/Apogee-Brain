@@ -1,4 +1,4 @@
-﻿const assert = require('assert');
+const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -50,7 +50,13 @@ assert.match(missingFile.reason, /does not exist/i);
 fs.renameSync(missingProjectPath + '.missing', missingProjectPath);
 
 
-const request = 'Update the current state for Perfume Vending Machine to Customer interviews are now underway.';
+const request = 'Update the Perfume Vending Validation project state to Customer and venue discovery is the next validation phase.';
+
+const naturalRequest = 'Update the current state for Perfume Vending Machine to Customer interviews are now underway.';
+assert.deepStrictEqual(
+    core.classifyRequestedActions(naturalRequest).map(({ capability }) => capability),
+    ['PROJECT_STATE_UPDATE']
+);
 
 assert.deepStrictEqual(
     core.classifyRequestedActions(request).map(({ capability }) => capability),
@@ -77,7 +83,7 @@ assert.strictEqual(preflight.answerNowTranscript, '');
 
     const written = fs.readFileSync(projectPath, 'utf8');
     assert.match(written, /## Current state/);
-    assert.match(written, /Customer interviews are now underway\./);
+    assert.match(written, /Customer and venue discovery is the next validation phase\./);
     assert.match(written, /## Next actions/);
     assert.match(written, /Preserve this action\./);
     assert.doesNotMatch(written, /Initial test state/);

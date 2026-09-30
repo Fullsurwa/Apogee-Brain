@@ -3,13 +3,9 @@
 # ====================================================================
 
 # --- CONFIGURATION ---
-$claudeApiKey     = $env:ANTHROPIC_API_KEY    # Reads directly from your Windows environment variable
-
 # Auto-detect OneDrive vault path
 $obsidianVault    = Join-Path $env:OneDrive "Desktop\Dan\Apogee SKOPE LLP\Apogee Brain"
-$contentScoutPath = Join-Path $PSScriptRoot "ContentScout.ps1"
 $canonicalBridgePath = Join-Path $obsidianVault "03_Active_Engine\Brains\core-engine\apogee_voice_bridge.js"
-. $contentScoutPath
 $handoffsPath     = if ($env:APOGEE_HANDOFFS_PATH) { $env:APOGEE_HANDOFFS_PATH } else { Join-Path $obsidianVault "Session Logs\handoffs.json" }
 
 function Read-ApogeeHandoffs {
@@ -104,14 +100,12 @@ while ($true) {
     if ($input -like "Hello Apogee*") {
         # Clean the input query by removing the wake word
         $userQuery = $input.Substring(12).TrimStart(" ", ",", ":", "-", "`t").Trim()
-        $isContentScoutQuery = $userQuery -match "(?i)^\s*what should I post about\s*\??\s*$"
-
         # --- STEP 1: Read Recent Notes for Context ---
         $notesPath = "$obsidianVault\Session Logs"
-        if (-not $isContentScoutQuery -and -not (Test-Path $notesPath)) {
+        if (-not (Test-Path $notesPath)) {
             New-Item -Path $notesPath -ItemType Directory | Out-Null
         }
-        $recentNotes = if (-not $isContentScoutQuery -and (Test-Path $notesPath)) {
+        $recentNotes = if (Test-Path $notesPath) {
             Get-ChildItem -Path $notesPath -Filter *.md | Sort-Object LastWriteTime -Descending | Select-Object -First 5
         } else {
             @()
@@ -125,48 +119,35 @@ while ($true) {
         # --- STEP 2: Handle Query (Claude API vs Free Tier Fallback) ---
         $replyText = ""
 
-        if ($isContentScoutQuery) {
-            # Content Scout remains isolated from the canonical Apogee pipeline.
-            try {
-                $replyText = Invoke-ContentScout `
-                    -VaultPath $obsidianVault `
-                    -ClaudeApiKey $claudeApiKey
-            } catch {
-                $replyText = "Content Scout failed: $($_.Exception.Message)"
+        # Voice requests use the canonical Apogee engine.
+        Write-Host "Routing request through canonical Apogee engine..." -ForegroundColor Yellow
+
+        try {
+            if (-not (Test-Path $canonicalBridgePath)) {
+                throw "Canonical Apogee bridge not found: $canonicalBridgePath"
             }
-        } else {
-            # Normal voice requests use the canonical Apogee engine.
-            Write-Host "Routing request through canonical Apogee engine..." -ForegroundColor Yellow
 
-            try {
-                if (-not (Test-Path $canonicalBridgePath)) {
-                    throw "Canonical Apogee bridge not found: $canonicalBridgePath"
-                }
+            $bridgeJson = & node $canonicalBridgePath $userQuery 2>$null
 
-                $bridgeJson = & node $canonicalBridgePath $userQuery 2>$null
-
-                if ($LASTEXITCODE -ne 0 -or -not $bridgeJson) {
-                    throw "Canonical Apogee bridge failed."
-                }
-
-                $bridgeResult = $bridgeJson | ConvertFrom-Json
-                $replyText = [string]$bridgeResult.reply
-
-                if ([string]::IsNullOrWhiteSpace($replyText)) {
-                    throw "Canonical Apogee returned an empty reply."
-                }
-            } catch {
-                $replyText = "Canonical Apogee engine error: $($_.Exception.Message)"
-                Write-Host $replyText -ForegroundColor Red
+            if ($LASTEXITCODE -ne 0 -or -not $bridgeJson) {
+                throw "Canonical Apogee bridge failed."
             }
+
+            $bridgeResult = $bridgeJson | ConvertFrom-Json
+            $replyText = [string]$bridgeResult.reply
+
+            if ([string]::IsNullOrWhiteSpace($replyText)) {
+                throw "Canonical Apogee returned an empty reply."
+            }
+        } catch {
+            $replyText = "Canonical Apogee engine error: $($_.Exception.Message)"
+            Write-Host $replyText -ForegroundColor Red
         }
         # --- STEP 3: Save to Vault ---
-        if (-not $isContentScoutQuery) {
-            $summaryFile = "$obsidianVault\Daily Summary.md"
-            $timestamp   = Get-Date -Format "yyyy-MM-dd HH:mm"
-            Add-Content -Path $summaryFile -Value "`n### Entry for $timestamp`n$replyText`n"
-            Write-Host "Log successfully appended to Obsidian." -ForegroundColor Green
-        }
+        $summaryFile = "$obsidianVault\Daily Summary.md"
+        $timestamp   = Get-Date -Format "yyyy-MM-dd HH:mm"
+        Add-Content -Path $summaryFile -Value "`n### Entry for $timestamp`n$replyText`n"
+        Write-Host "Log successfully appended to Obsidian." -ForegroundColor Green
 
         Write-Host "Apogee Says: $replyText`n" -ForegroundColor Green
     }

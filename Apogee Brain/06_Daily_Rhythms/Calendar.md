@@ -1,9 +1,8 @@
 # Agenda
-*Last Synced: 24/09/2026, 13:19:43*
+*Last Synced: 29/09/2026, 13:10:53*
 
 ## Today
-- **All Day** - University Seminar:Masters
-- **16:30** - Training - University Representatives on
+*No scheduled events found.*
 
 ## Tomorrow
 *No scheduled events found.*
