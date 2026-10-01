@@ -91,6 +91,8 @@ CORE BEHAVIOR:
 
 BRIEFING BEHAVIOR:
 - For a general request such as "brief me", "status", "catch me up", or "what's happening today", produce a useful conversational briefing based on what actually matters in Dan's current context.
+- Lead with authoritative Current Focus and open action items. An unresolved item in structured memory or conversation history is not automatically current work; mention an older blocker only when authoritative current state depends on it or Dan explicitly asks about it.
+- Treat completed dashboard actions as closed unless Dan explicitly asks about completed work or current state shows a new reason to revisit them.
 - Calendar, health/activity, current work, validation evidence, risks, priorities, and reminders are available sources of context, not mandatory sections.
 - Do not lead with Calendar or Health merely because they exist.
 - Do not describe something as outstanding simply because it appears in an old note; use current authoritative evidence where available.
@@ -937,7 +939,7 @@ function normalizeProjectValidationEntry(entry) {
     return normalized;
 }
 
-function summarizeMemoryStore() {
+function summarizeMemoryStore(options = {}) {
     const store = readMemoryStore();
     const sections = [];
     const renderSection = (label, items, formatter) => {
@@ -946,7 +948,10 @@ function summarizeMemoryStore() {
         return `## ${label}\n${rendered}`;
     };
 
-    ['facts', 'hypotheses', 'lessons', 'experiences'].forEach((key) => {
+    const memorySections = options.currentBriefingOnly
+        ? ['facts']
+        : ['facts', 'hypotheses', 'lessons', 'experiences'];
+    memorySections.forEach((key) => {
         const section = renderSection(key.replace('_', ' '), store[key], (item) => {
             if (typeof item === 'string') return `- ${item}`;
             return `- ${item.summary || item.claim || item.lesson || item.name || item.prompt || 'Memory item'}`;
@@ -954,7 +959,7 @@ function summarizeMemoryStore() {
         if (section) sections.push(section);
     });
 
-    const validationSection = renderSection('project validations', store.project_validations, (item) => {
+    const validationSection = options.currentBriefingOnly ? null : renderSection('project validations', store.project_validations, (item) => {
         const decision = item.decision ? ` [${item.decision}]` : '';
         const status = item.status ? ` (${item.status})` : '';
         const evidence = Array.isArray(item.evidence) && item.evidence.length ? ` | evidence: ${item.evidence.map((entry) => entry.detail || entry.source || 'evidence').slice(0, 2).join('; ')}` : '';
@@ -963,6 +968,50 @@ function summarizeMemoryStore() {
     if (validationSection) sections.push(validationSection);
 
     return sections.length ? sections.join('\n\n') : '## Structured memory\nNo structured memory recorded yet.';
+}
+
+function isExplicitHistoryRequest(transcript) {
+    return /\b(?:what happened|what did i ask|what did we discuss|earlier|previously|last time|in the past|history of|remind me about|look up the earlier)\b/i.test(String(transcript || ''));
+}
+
+function retrieveRelevantInteractionHistory(transcript, maxCharacters = 5000) {
+    if (!isExplicitHistoryRequest(transcript)) return '';
+
+    const stopWords = new Set(['about', 'after', 'been', 'could', 'from', 'have', 'happened', 'with', 'what', 'when', 'where', 'which', 'would']);
+    const terms = [...new Set((String(transcript || '').match(/[A-Za-z][A-Za-z0-9-]{2,}/g) || [])
+        .flatMap((term) => term.split('-'))
+        .map((term) => term.toLowerCase())
+        .filter((term) => term.length >= 4 && !stopWords.has(term)))];
+    if (!terms.length) return '';
+
+    const matches = readHistory()
+        .filter((entry) => entry && typeof entry === 'object' && (entry.query || entry.reply))
+        .map((entry) => {
+            const content = `${entry.query || ''}\n${entry.reply || ''}`;
+            const lower = content.toLowerCase();
+            const score = terms.reduce((total, term) => total + (new RegExp(`\\b${term}\\b`, 'i').test(lower) ? 1 : 0), 0);
+            return { entry, content, score };
+        })
+        .filter(({ score }) => score >= Math.min(2, terms.length))
+        .sort((a, b) => String(b.entry.timestamp || '').localeCompare(String(a.entry.timestamp || '')))
+        .slice(0, 3);
+
+    let remaining = maxCharacters;
+    const blocks = [];
+    for (const { entry } of matches) {
+        if (remaining <= 0) break;
+        const block = `### Historical interaction (${entry.timestamp || 'date unavailable'})\nRequest: ${String(entry.query || '').trim()}\nRecorded response: ${String(entry.reply || '').trim()}`;
+        const clipped = block.slice(0, Math.min(2000, remaining));
+        blocks.push(clipped);
+        remaining -= clipped.length;
+    }
+    return blocks.join('\n\n');
+}
+
+function briefingActionDashboard(transcript) {
+    const dashboard = readFileTail(MASTER_DASHBOARD_PATH, 4000);
+    if (/\b(?:completed (?:task|action|work)|work i completed|what have i done|what did i finish|already complete|marked complete)\b/i.test(String(transcript || ''))) return dashboard;
+    return dashboard.split(/\r?\n/).filter((line) => !/^\s*[-*]\s*\[x\]/i.test(line)).join('\n');
 }
 
 function retrieveRelevantVaultMaterial(transcript, maxCharacters = 6000) {
@@ -1761,6 +1810,7 @@ function classifyResponseMode(transcript) {
 
 function buildResponseContext(mode, transcript) {
     const topicMaterial = retrieveRelevantVaultMaterial(transcript);
+    const explicitHistory = retrieveRelevantInteractionHistory(transcript);
     const sourceContract = [
         '## Runtime source-of-truth and context precedence',
         'Current Focus is authoritative in 00_Command_Center/Now.md; Primary Objective is authoritative in 00_Command_Center/Life_Dashboard.md; open/completed action items are authoritative in 00_Command_Center/Master_Dashboard.md; supported project current state is authoritative in that project\u2019s _Project_Context.md.',
@@ -1787,9 +1837,10 @@ function buildResponseContext(mode, transcript) {
                 '## Health log (recent)',
                 readFileTail(EXERCISE_PATH, 1800),
                 '## Current action-item dashboard (authoritative)',
-                readFileTail(MASTER_DASHBOARD_PATH, 4000),
-                '## Structured memory (facts, hypotheses, lessons, experiences, project validations)',
-                summarizeMemoryStore(),
+                briefingActionDashboard(transcript),
+                '## Structured memory (current supporting facts and lessons only; not task ownership)',
+                summarizeMemoryStore({ currentBriefingOnly: true }),
+                ...(explicitHistory ? ['## Requested conversation history (supporting context; not current priority)', explicitHistory] : []),
                 '## Topic-specific retrieved material (supporting context; not authoritative state)',
                 topicMaterial
             );
@@ -1836,6 +1887,7 @@ function buildResponseContext(mode, transcript) {
 
         default:
             return assemble(
+                ...(explicitHistory ? ['## Requested conversation history (supporting context; not current priority)', explicitHistory] : []),
                 '## Topic-specific retrieved material (supporting context; not authoritative state)',
                 topicMaterial,
                 '## Current action items from Master_Dashboard.md (authoritative for action items only)',
